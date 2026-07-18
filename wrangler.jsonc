@@ -17,7 +17,8 @@
     // (404). gemini-3.1-flash-lite is the current-gen flash-lite (same free tier,
     // higher RPD than full flash) — swapped via env exactly as the design intends.
     "GEMINI_MODEL": "gemini-3.1-flash-lite",
-    "ELEVENLABS_VOICE_ID": "",
+    // Natalia — warm conversational Russian female (ElevenLabs voice library).
+    "ELEVENLABS_VOICE_ID": "dHAwRJVaEPhU907QLTPW",
     // Cloudflare test key (always-pass) until the owner mints real Turnstile keys in the dashboard.
     "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
     // Adapter bitrix24 is active only when cfg.bitrix24.webhookUrl && BITRIX_ENABLED === "true".

@@ -637,4 +637,14 @@ flowchart LR
 - «отмените» → «да, отмените» → в D1 **status=cancelled, cells=0** (ячейки освобождены) ✓
 - Счётчик чата выставлен в 20 → 21-е сообщение → `convo_rows=0` (отклонено ДО handleTurn), `chat_count=21` ✓
 
-**Осталось владельцу (2 минуты):** написать боту с телефона `/start` + «Сколько стоит маникюр?» и **голосовое** — это подтвердит физическую доставку ответа и разблокирует live-STT (этап 5, весь код готов; фейковый file_id через `getFile` прогнать нельзя). `/owner <admin-токен из .admin-token.local>` привяжет уведомления владельцу. TTS ждёт ключ ElevenLabs (шаг владельца 2).
+**Осталось владельцу (2 минуты):** написать боту с телефона `/start` + «Сколько стоит маникюр?» и **голосовое** — это подтвердит физическую доставку ответа и разблокирует live-STT (этап 5, весь код готов; фейковый file_id через `getFile` прогнать нельзя). `/owner <admin-токен из .admin-token.local>` привяжет уведомления владельцу.
+
+### ElevenLabs подключён + этап 5 TTS готов ✅ 18.07.2026
+
+Ассистент через залогиненный Chrome владельца (claude-in-chrome, с его «сделай сам»): создан TTS-only API-ключ `aiym-receptionist` (least-privilege: только Text-to-Speech) → `wrangler secret put ELEVENLABS_API_KEY`. Голос выбран в Voice Library: **Natalia — Gentle and Soothing** (`dHAwRJVaEPhU907QLTPW`, тёплый разговорный русский женский) → `ELEVENLABS_VOICE_ID` в vars. Второй голос для «голосового клиента» на демо — Alina (`dVRDrbP5ULGXB94se4KZ`).
+
+Сгенерированы 3 mp3 через TTS-API в `site/assets/` (Айым=Natalia: greeting, call-out; клиент=Alina: call-in) — все отдаются с деплоя `200 audio/mpeg`; аудио-блок «Голос в деле» на лендинге/демо теперь живой.
+
+**Приёмка этапа 5 (TTS):** синтез проверен вживую — `POST /v1/text-to-speech/{voice}?output_format=mp3_44100_64` с `eleven_flash_v2_5` → `200`, валидный MPEG layer III 64k/44.1k (60–102 КБ). Юнит-кэш (приёмка (а)) — зелёный. Полный голосовой цикл «голосовое в TG → 🎙-транскрипт → текст + голосовой ответ» разблокируется одним голосовым от владельца (STT нельзя прогнать фейковым file_id; sendVoice — та же Bot-API инфраструктура, что подтверждённый sendMessage).
+
+**Ключ ElevenLabs** (TTS-only) сохранён локально в `.admin-token.local` (gitignored) для регенерации аудио; в Cloudflare — секретом.
