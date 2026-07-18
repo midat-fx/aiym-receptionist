@@ -502,3 +502,14 @@ flowchart LR
 - Плейнтекст admin-токена demo-тенанта и `WEBHOOK_SECRET` сохранены локально в `.admin-token.local` (в `.gitignore`, не коммитится); в `seed.sql` — только SHA-256.
 
 **Ссылки:** Worker https://aiym.faizov-midat.workers.dev · Repo midat-fx/aiym-receptionist
+
+### Этап 1 — движок времени и слотов (pure) ✅ 18.07.2026
+
+**Сделано:**
+- `engine/time.ts` по зафиксированным алгоритмам §6.5: `localToTs` через Intl-обратное-чтение с двумя коррекциями (без хардкода `+05:00`); `formatSlotLabel` — ДВА ru-RU форматтера через ", " (даёт «сб, 18 июля, 15:00» без предлога «в»); `todayInTz`, `addDays`, `weekdayOf`, плюс утилиты `hhmmToMin/minToHhmm/isHhmm`.
+- `config.ts`: `parseWorkingHours` (валидация JSON, HH:mm, open<close, сортировка/непересечение окон, недостающие дни = закрыто), `assertServiceDuration` (кратность slot_step), `parseCrmConfig`.
+- `slots.generateCandidates` (чистая): кандидаты каждые slot_step, пока `start+duration+buffer ≤ close`; отсечение `startTs < now+60`; кламп диапазона в `[today, today+horizon-1]`; фильтр part_of_day (<12 / 12–16:59 / ≥17).
+
+**Приёмка пройдена:** `tsc` — exit 0; `vitest run` — 34 теста зелёные (format 13 + time 9 + slots 12), exit 0. «Сетка» на понедельник: Маникюр 90′ → 10:00…18:30 шаг 30 (18 слотов) — это же и ручной прогон приёмки. Покрыто: обед-2-окна, закрытый день, длинная услуга в конец окна, буфер, лид-тайм (и «сегодня поздно → пусто»), part_of_day×3, кламп горизонта и прошедшей даты.
+
+**Отклонения:** нет. Заметка: при прогоне тестов vitest-pool-workers держит remote-соединение AI-биндинга ⇒ косметический warning + ~10 с на закрытии Vite-сервера; на код выхода (0) и результат не влияет (AI.run в тестах не вызывается — нейроны не тратятся).
