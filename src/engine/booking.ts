@@ -173,6 +173,11 @@ async function findActiveBooking(db: D1Database, by: CancelBy): Promise<BookingR
     .first<BookingRow>();
 }
 
+/** The client's soonest active booking, or null — for «what's my booking» and reschedule. */
+export async function getActiveBooking(db: D1Database, by: CancelBy): Promise<BookingRow | null> {
+  return findActiveBooking(db, by);
+}
+
 /** Mark the booking cancelled and free its cells (DELETE); the row stays for history. */
 export async function cancel(db: D1Database, by: CancelBy, _now: Date = new Date()): Promise<CancelResult> {
   const booking = await findActiveBooking(db, by);

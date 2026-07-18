@@ -128,3 +128,59 @@ export async function getResources(db: D1Database, bizId: number): Promise<Resou
     .all<ResourceRow>();
   return results ?? [];
 }
+
+/** Count a client's active (confirmed) bookings — for the 2-per-client demo limit. */
+export async function countActiveBookings(
+  db: D1Database,
+  bizId: number,
+  by: { tgChatId?: number; webSessionId?: string },
+): Promise<number> {
+  if (by.tgChatId != null) {
+    const row = await db
+      .prepare("SELECT count(*) AS n FROM bookings WHERE business_id = ? AND status = 'confirmed' AND tg_chat_id = ?")
+      .bind(bizId, by.tgChatId)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+  if (by.webSessionId) {
+    const row = await db
+      .prepare("SELECT count(*) AS n FROM bookings WHERE business_id = ? AND status = 'confirmed' AND web_session_id = ?")
+      .bind(bizId, by.webSessionId)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+  return 0;
+}
+
+export interface LeadInput {
+  businessId: number;
+  name?: string | null;
+  phone?: string | null;
+  service?: string | null;
+  budget?: string | null;
+  urgency?: string | null;
+  summary: string;
+  channel: string;
+  tgChatId?: number | null;
+  bookingId?: string | null;
+}
+
+export async function insertLead(db: D1Database, lead: LeadInput): Promise<void> {
+  await db
+    .prepare(
+      "INSERT INTO leads (business_id, name, phone, service, budget, urgency, summary, channel, tg_chat_id, booking_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(
+      lead.businessId,
+      lead.name ?? null,
+      lead.phone ?? null,
+      lead.service ?? null,
+      lead.budget ?? null,
+      lead.urgency ?? null,
+      lead.summary,
+      lead.channel,
+      lead.tgChatId ?? null,
+      lead.bookingId ?? null,
+    )
+    .run();
+}

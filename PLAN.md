@@ -524,3 +524,19 @@ flowchart LR
 **Приёмка пройдена:** `tsc` — exit 0; `vitest run` — 46 тестов зелёные (booking 9 + occupancy 3 добавлены), в настоящем workerd/D1. Ключевые: **два `Promise.all` book() на один слот → ровно одна строка bookings, второй `conflict` + alternatives**; **та же пара времени у РАЗНЫХ мастеров → обе ok**; атомарность (при конфликте строки bookings НЕТ, ячеек ровно 3); идемпотентный повтор → `already` без дубля; cancel освобождает ячейки; invalid_slot без записи; not_found.
 
 **Отклонения:** per-test storage isolation vitest-pool-workers НЕ откатывает записи между `it` в файле ⇒ в `beforeEach` чищу мутабельные таблицы (bookings/booking_cells/leads/conversations/rate_limits) вручную; схема+сид — в `beforeAll`. Грабля §10 «schema.sql не через db.exec()» подтверждена и усилена: `splitSql` режет `--` комментарии ДО конца строки (инлайновый `;` внутри комментария `…global);` иначе рвал стейтмент — «incomplete input»).
+
+### Этап 3 — LLM-слой и текстовый контур в TG ✅ 18.07.2026 (кроме live-TG — шаг владельца)
+
+**Сделано:**
+- `conversation.ts` (get/ensure/save, парс history & last_offered, трим 16), `limits.ts` (`checkAndIncrement` — атомарный upsert D1), db-хелперы `countActiveBookings`/`insertLead`.
+- `llm/prompt.ts`: `buildSystemPrompt` (Приложение B дословно) + `buildNowInfo` (блок «Сейчас» с картой день→дата на 7, форматирование часов группировкой, `priceLine`).
+- `llm/tools.ts`: dispatcher со всеми 5 инструментами — двойной замок анти-галлюцинации (bookSlot принимает slot_start только из `last_offered`; движок независимо перепроверяет), booking_limit ≥2, авто-расширение part→'any' при пустоте (`note: requested_part_busy`), `normalizePhone` `^\+?[78]\d{10}$`→`+7…`, cancelBooking(confirm=false)=узнать бронь (перенос), qualifyLead/handoff.
+- `llm/gemini.ts`: raw fetch v1beta `:generateContent`, цикл ≤4 хопов, финализатор `tool_config.mode=NONE`, fallback-фраза, AbortController 10 с.
+- `chat.ts handleTurn` — единый вход TG-текста/веба; при падении Gemini — детерминированный фолбэк со слотами на завтра (§9.7). `index.ts`: `POST /tg/:botId` (secret-заголовок, дедуп `botId+updateId`, 200+waitUntil, `/start`+клавиатура, лимиты global 300 / chat 20, sendReply HTML→plain), `GET /api/tg/setup`.
+
+**Приёмка:** `tsc` — exit 0; `vitest run` — **52 теста** зелёные (tools 6 добавлены: bookSlot без/мимо last_offered → отказ, валидный флоу, qualifyLead, мусорные аргументы, нормализация телефона). Протокол Gemini проверен ЖИВЫМ вызовом ключа: `?key=` авторизует, роль functionResponse = `user` работает, «завтра к трём на маникюр» → `checkFreeSlots(service_id=6, 2026-07-19, part=afternoon)` и связный русский ответ на hop2. Live-диалог в самом TG — см. блокер.
+
+**Отклонения / БЛОКЕР:**
+- **Модель:** `gemini-2.5-flash-lite` из §2/§9.2 у Google теперь недоступна новым пользователям (HTTP 404 «no longer available to new users»). Env-дизайн ровно для этого: `GEMINI_MODEL` → **`gemini-3.1-flash-lite`** (текущий flash-lite, тот же бесплатный тир с высоким RPD, GA-пин ради воспроизводимости date-eval). Принцип §9.2 (модель из env, не хардкод) соблюдён. `gemini-2.0-flash-lite` дал 429 на общем ключе — не берём.
+- **ШАГ ВЛАДЕЛЬЦА (блокер live-приёмки):** создать бота `@aiym_admin_bot` у @BotFather, прислать токен → `UPDATE businesses SET tg_bot_id=<число из токена>, tg_bot_token=<токен> WHERE slug='demo-salon'` + `GET /api/tg/setup?secret=<WEBHOOK_SECRET>&biz=demo-salon`. До токена живой диалог в Telegram недоступен ассистенту (регистрация ботов запрещена). Полный контур handleTurn будет проверен end-to-end через веб-канал `/chat` на этапе 4 (тот же handleTurn, без BotFather).
+- Ключ `GEMINI_API_KEY` взят из `~/projects/deka/.env` (§0 п.7) и записан секретом; деплой обновлён.

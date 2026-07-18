@@ -8,17 +8,37 @@ export interface LimitResult {
 }
 
 /**
- * Atomically bump rate_limits[scope,key,day] and report whether it stayed within max.
- * `day` is 'YYYY-MM-DD' for daily scopes, 'YYYY-MM' for monthly (tts_credits).
- * Implemented in stage 3.
+ * Atomically bump rate_limits[scope,key,day] by `by` and report whether the new
+ * count stays within max. `day` is 'YYYY-MM-DD' for daily scopes, 'YYYY-MM' for
+ * monthly (tts_credits). Increment-then-check: the over-limit turn is still counted.
  */
 export async function checkAndIncrement(
-  _db: D1Database,
-  _scope: LimitScope,
-  _key: string,
-  _day: string,
-  _max: number,
-  _by = 1,
+  db: D1Database,
+  scope: LimitScope,
+  key: string,
+  day: string,
+  max: number,
+  by = 1,
 ): Promise<LimitResult> {
-  throw new Error("not implemented — stage 3");
+  await db
+    .prepare(
+      "INSERT INTO rate_limits (scope, key, day, count) VALUES (?, ?, ?, ?) ON CONFLICT(scope, key, day) DO UPDATE SET count = count + ?",
+    )
+    .bind(scope, key, day, by, by)
+    .run();
+  const row = await db
+    .prepare("SELECT count FROM rate_limits WHERE scope = ? AND key = ? AND day = ?")
+    .bind(scope, key, day)
+    .first<{ count: number }>();
+  const count = row?.count ?? by;
+  return { ok: count <= max, count };
+}
+
+/** Read a counter without incrementing (e.g. to show remaining quota). */
+export async function currentCount(db: D1Database, scope: LimitScope, key: string, day: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT count FROM rate_limits WHERE scope = ? AND key = ? AND day = ?")
+    .bind(scope, key, day)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
 }

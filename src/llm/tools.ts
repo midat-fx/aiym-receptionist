@@ -1,5 +1,13 @@
-// Gemini functionDeclarations — Appendix C, applied verbatim. The dispatcher
-// (validation + last_offered lock + engine calls) is implemented in stage 3.
+// Gemini functionDeclarations — Appendix C, applied verbatim, plus the dispatcher
+// (validation + last_offered lock + engine calls).
+
+import type { BusinessRow, Channel, ResourceRow, ServiceRow } from "../db";
+import { countActiveBookings, insertLead } from "../db";
+import { book, cancel, getActiveBooking } from "../engine/booking";
+import { checkAvailability, type PartOfDay } from "../engine/slots";
+import { formatSlotLabel, tsToLocal } from "../engine/time";
+import type { OfferedSlot } from "../conversation";
+import { priceLine } from "./prompt";
 
 export const toolDeclarations = [
   {
@@ -81,3 +89,175 @@ export const toolDeclarations = [
     },
   },
 ];
+
+export interface TurnEvent {
+  type: "booking_created" | "booking_cancelled";
+}
+
+/** Mutable per-turn context threaded through the dispatcher; chat.ts persists the accumulators. */
+export interface DispatchContext {
+  db: D1Database;
+  business: BusinessRow;
+  services: ServiceRow[];
+  resources: ResourceRow[];
+  now: Date;
+  channel: Channel;
+  tgChatId?: number;
+  webSessionId?: string;
+  // accumulators mutated by the dispatcher
+  lastOffered: OfferedSlot[];
+  events: TurnEvent[];
+  clientName?: string;
+  clientPhone?: string;
+  handoffReason?: string;
+}
+
+const asString = (v: unknown): string | undefined => (v == null ? undefined : String(v));
+
+/** Kazakhstan phone normalization: `^\+?[78]\d{10}$` -> `+7…`; otherwise keep as given. */
+export function normalizePhone(raw: string): string {
+  const cleaned = raw.replace(/[\s\-()]/g, "");
+  if (/^\+?[78]\d{10}$/.test(cleaned)) {
+    return "+7" + cleaned.replace(/^\+?[78]/, "");
+  }
+  return raw.trim();
+}
+
+function offeredToLast(serviceId: number, slots: Array<{ startTs: number; startLocal: string; label: string }>): OfferedSlot[] {
+  return slots.map((s) => ({ service_id: serviceId, start: s.startLocal, ts: s.startTs, label: s.label }));
+}
+
+/**
+ * Execute one tool call and return the functionResponse body. Enforces the two
+ * anti-hallucination locks: (1) bookSlot only accepts a slot_start present in
+ * ctx.lastOffered; (2) the engine independently re-validates the slot.
+ */
+export async function dispatchTool(
+  ctx: DispatchContext,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const tz = ctx.business.tz;
+
+  if (name === "checkFreeSlots") {
+    const serviceId = Number(args.service_id);
+    const svc = ctx.services.find((s) => s.id === serviceId);
+    if (!svc) return { error: "unknown_service" };
+    const from = asString(args.from_date) ?? "";
+    const to = asString(args.to_date) ?? from;
+    const partRaw = asString(args.part_of_day) ?? "any";
+    const part = (["any", "morning", "afternoon", "evening"].includes(partRaw) ? partRaw : "any") as PartOfDay;
+
+    let slots = await checkAvailability(ctx.db, ctx.business.id, serviceId, from, to, part, ctx.now);
+    let note: string | undefined;
+    if (part !== "any" && slots.length === 0) {
+      // Requested part busy -> widen to the whole day rather than answer «nothing».
+      slots = await checkAvailability(ctx.db, ctx.business.id, serviceId, from, to, "any", ctx.now);
+      note = "requested_part_busy";
+    }
+    const capped = slots.slice(0, 12);
+    ctx.lastOffered = offeredToLast(serviceId, capped);
+    const resp: Record<string, unknown> = {
+      service: svc.name,
+      price_line: priceLine(svc),
+      slots: capped.map((s) => ({ start: s.startLocal, label: s.label })),
+      more_count: Math.max(0, slots.length - 12),
+    };
+    if (note) resp.note = note;
+    return resp;
+  }
+
+  if (name === "bookSlot") {
+    const serviceId = Number(args.service_id);
+    const slotStart = asString(args.slot_start) ?? "";
+    const clientName = (asString(args.client_name) ?? "").trim();
+    const svc = ctx.services.find((s) => s.id === serviceId);
+    if (!svc) return { error: "unknown_service" };
+
+    // Lock 1: the start must come from the last checkFreeSlots response.
+    const offered = ctx.lastOffered.find((o) => o.service_id === serviceId && o.start === slotStart);
+    if (!offered) return { error: "call checkFreeSlots first and copy slot_start from its response" };
+
+    const active = await countActiveBookings(ctx.db, ctx.business.id, {
+      tgChatId: ctx.tgChatId,
+      webSessionId: ctx.webSessionId,
+    });
+    if (active >= 2) return { error: "booking_limit" };
+
+    const phone = args.client_phone != null ? normalizePhone(String(args.client_phone)) : undefined;
+    const result = await book(
+      ctx.db,
+      {
+        bizId: ctx.business.id,
+        serviceId,
+        startTs: offered.ts,
+        client: {
+          name: clientName || "Клиент",
+          phone,
+          channel: ctx.channel,
+          tgChatId: ctx.tgChatId,
+          webSessionId: ctx.webSessionId,
+        },
+      },
+      ctx.now,
+    );
+    if (result.ok) {
+      if (clientName) ctx.clientName = clientName;
+      if (phone) ctx.clientPhone = phone;
+      ctx.events.push({ type: "booking_created" });
+      return { ok: true, confirmation: { service: svc.name, label: offered.label, client_name: clientName } };
+    }
+    ctx.lastOffered = offeredToLast(serviceId, result.alternatives);
+    return {
+      ok: false,
+      reason: result.reason,
+      alternatives: result.alternatives.map((s) => ({ start: s.startLocal, label: s.label })),
+    };
+  }
+
+  if (name === "cancelBooking") {
+    const confirm = args.confirm === true;
+    const by = { bizId: ctx.business.id, tgChatId: ctx.tgChatId, webSessionId: ctx.webSessionId };
+    if (!confirm) {
+      const booking = await getActiveBooking(ctx.db, by);
+      if (!booking) return { active_booking: null };
+      const svc = ctx.services.find((s) => s.id === booking.service_id);
+      return {
+        active_booking: {
+          service: svc?.name ?? "",
+          start: tsToLocal(booking.start_ts, tz),
+          label: formatSlotLabel(booking.start_ts, tz),
+        },
+      };
+    }
+    const res = await cancel(ctx.db, by, ctx.now);
+    if (res.ok) {
+      ctx.events.push({ type: "booking_cancelled" });
+      return { ok: true };
+    }
+    return { ok: false, reason: "not_found" };
+  }
+
+  if (name === "qualifyLead") {
+    const phone = args.phone != null ? normalizePhone(String(args.phone)) : null;
+    await insertLead(ctx.db, {
+      businessId: ctx.business.id,
+      name: asString(args.name) ?? null,
+      phone,
+      service: asString(args.service) ?? null,
+      budget: asString(args.budget) ?? null,
+      urgency: asString(args.urgency) ?? null,
+      summary: asString(args.summary) ?? "Заявка",
+      channel: ctx.channel,
+      tgChatId: ctx.tgChatId ?? null,
+    });
+    return { ok: true };
+  }
+
+  if (name === "handoffToOwner") {
+    ctx.handoffReason = asString(args.reason) ?? "нужен человек";
+    return { ok: true };
+  }
+
+  return { error: "unknown_tool" };
+}

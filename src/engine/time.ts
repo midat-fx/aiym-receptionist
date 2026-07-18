@@ -98,6 +98,21 @@ export function localToTs(local: string, tz: string): number {
   return Math.floor(guess / 1000);
 }
 
+/** Unix seconds -> local machine datetime "YYYY-MM-DDTHH:mm" in tz. */
+export function tsToLocal(ts: number, tz: string): string {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(ts * 1000));
+  const hour = part(p, "hour") === "24" ? "00" : part(p, "hour");
+  return `${part(p, "year")}-${part(p, "month")}-${part(p, "day")}T${hour}:${part(p, "minute")}`;
+}
+
 /**
  * Human slot label «сб, 19 июля, 15:00» from a start ts. Two ru-RU formatters
  * joined by ", " — a single Intl call yields «сб, 19 июля в 15:00» (unwanted preposition).
