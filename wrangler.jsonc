@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aiym",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "assets": { "directory": "./site", "binding": "ASSETS" },
+  // Real ids filled in by `wrangler d1 create aiym-db` and `wrangler kv namespace create KV`.
+  // Local vitest (miniflare) ignores these ids and uses its own local storage.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "aiym-db", "database_id": "f8d2d49d-6dc2-4cee-a089-717e0a5955e0" }
+  ],
+  "kv_namespaces": [{ "binding": "KV", "id": "5188b20049044d33bfd0067191e12d03" }],
+  "ai": { "binding": "AI" },
+  "triggers": { "crons": ["0 22 * * *"] },
+  "vars": {
+    "GEMINI_MODEL": "gemini-2.5-flash-lite",
+    "ELEVENLABS_VOICE_ID": "",
+    // Cloudflare test key (always-pass) until the owner mints real Turnstile keys in the dashboard.
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    // Adapter bitrix24 is active only when cfg.bitrix24.webhookUrl && BITRIX_ENABLED === "true".
+    "BITRIX_ENABLED": "false"
+  },
+  "observability": { "enabled": true }
+}
