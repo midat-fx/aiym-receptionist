@@ -513,3 +513,14 @@ flowchart LR
 **Приёмка пройдена:** `tsc` — exit 0; `vitest run` — 34 теста зелёные (format 13 + time 9 + slots 12), exit 0. «Сетка» на понедельник: Маникюр 90′ → 10:00…18:30 шаг 30 (18 слотов) — это же и ручной прогон приёмки. Покрыто: обед-2-окна, закрытый день, длинная услуга в конец окна, буфер, лид-тайм (и «сегодня поздно → пусто»), part_of_day×3, кламп горизонта и прошедшей даты.
 
 **Отклонения:** нет. Заметка: при прогоне тестов vitest-pool-workers держит remote-соединение AI-биндинга ⇒ косметический warning + ~10 с на закрытии Vite-сервера; на код выхода (0) и результат не влияет (AI.run в тестах не вызывается — нейроны не тратятся).
+
+### Этап 2 — booking engine (D1) + священный принцип ✅ 18.07.2026
+
+**Сделано:**
+- `engine/slots.ts`: `cellsFor(startTs, span, step)` (ячейки брони на сетке) + реальный `checkAvailability` (вычитает занятые `booking_cells` мастера из чистой сетки одним диапазонным SELECT).
+- `engine/booking.ts` — фиксированный порядок §6.1: (1) идемпотентность (SELECT confirmed-брони клиента на тот же слот+услугу → `already`); (2) валидация `startTs` по чистой сетке `generateCandidates` БЕЗ занятости → иначе `invalid_slot`; (3) один `db.batch`: INSERT bookings + N booking_cells. Конфликт возвращается ТОЛЬКО когда `message` матчит `/UNIQUE constraint failed:.*booking_cells/`; любое иное исключение — rethrow. `cancel`: находит ближайшую активную бронь → batch `UPDATE status='cancelled'` + `DELETE booking_cells` (строка остаётся для истории).
+- db-хелперы `getBusinessById`, `getBookingById`.
+
+**Приёмка пройдена:** `tsc` — exit 0; `vitest run` — 46 тестов зелёные (booking 9 + occupancy 3 добавлены), в настоящем workerd/D1. Ключевые: **два `Promise.all` book() на один слот → ровно одна строка bookings, второй `conflict` + alternatives**; **та же пара времени у РАЗНЫХ мастеров → обе ok**; атомарность (при конфликте строки bookings НЕТ, ячеек ровно 3); идемпотентный повтор → `already` без дубля; cancel освобождает ячейки; invalid_slot без записи; not_found.
+
+**Отклонения:** per-test storage isolation vitest-pool-workers НЕ откатывает записи между `it` в файле ⇒ в `beforeEach` чищу мутабельные таблицы (bookings/booking_cells/leads/conversations/rate_limits) вручную; схема+сид — в `beforeAll`. Грабля §10 «schema.sql не через db.exec()» подтверждена и усилена: `splitSql` режет `--` комментарии ДО конца строки (инлайновый `;` внутри комментария `…global);` иначе рвал стейтмент — «incomplete input»).

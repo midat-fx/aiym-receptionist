@@ -1,5 +1,5 @@
 import { parseWorkingHours } from "../config";
-import type { BusinessRow, ServiceRow } from "../db";
+import { getBusinessById, getServiceById, type BusinessRow, type ServiceRow } from "../db";
 import { addDays, formatSlotLabel, hhmmToMin, localToTs, minToHhmm, todayInTz, weekdayOf } from "./time";
 
 export interface Slot {
@@ -70,15 +70,46 @@ export function generateCandidates(
   return slots;
 }
 
-/** generateCandidates minus booking_cells occupancy for the service's master. Implemented in stage 2. */
+/**
+ * Grid cells occupied by a booking that starts at startTs and spans spanMin
+ * (duration + buffer), at stepMin granularity. A cell_ts marks the start of a
+ * step-sized cell; the booking touches every cell it overlaps.
+ */
+export function cellsFor(startTs: number, spanMin: number, stepMin: number): number[] {
+  const count = Math.ceil(spanMin / stepMin);
+  const cells: number[] = [];
+  for (let k = 0; k < count; k++) cells.push(startTs + k * stepMin * 60);
+  return cells;
+}
+
+/** generateCandidates minus booking_cells occupancy for the service's master. */
 export async function checkAvailability(
-  _db: D1Database,
-  _bizId: number,
-  _serviceId: number,
-  _fromDate: string,
-  _toDate: string,
-  _part?: PartOfDay,
-  _now?: Date,
+  db: D1Database,
+  bizId: number,
+  serviceId: number,
+  fromDate: string,
+  toDate: string,
+  part: PartOfDay = "any",
+  now: Date = new Date(),
 ): Promise<Slot[]> {
-  throw new Error("not implemented — stage 2");
+  const b = await getBusinessById(db, bizId);
+  const svc = await getServiceById(db, bizId, serviceId);
+  if (!b || !svc) return [];
+
+  const candidates = generateCandidates(b, svc, fromDate, toDate, part, now);
+  if (candidates.length === 0) return [];
+
+  const span = svc.duration_min + b.buffer_min;
+  const step = b.slot_step_min;
+  const startsTs = candidates.map((c) => c.startTs);
+  const minTs = Math.min(...startsTs);
+  const maxEnd = Math.max(...startsTs) + span * 60;
+
+  const { results } = await db
+    .prepare("SELECT cell_ts FROM booking_cells WHERE business_id = ? AND resource_id = ? AND cell_ts >= ? AND cell_ts < ?")
+    .bind(bizId, svc.resource_id, minTs, maxEnd)
+    .all<{ cell_ts: number }>();
+  const occupied = new Set((results ?? []).map((r) => r.cell_ts));
+
+  return candidates.filter((c) => cellsFor(c.startTs, span, step).every((ts) => !occupied.has(ts)));
 }

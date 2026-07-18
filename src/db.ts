@@ -98,6 +98,14 @@ export async function getBusinessByBotId(db: D1Database, botId: number): Promise
   return db.prepare("SELECT * FROM businesses WHERE tg_bot_id = ?").bind(botId).first<BusinessRow>();
 }
 
+export async function getBusinessById(db: D1Database, id: number): Promise<BusinessRow | null> {
+  return db.prepare("SELECT * FROM businesses WHERE id = ?").bind(id).first<BusinessRow>();
+}
+
+export async function getBookingById(db: D1Database, id: string): Promise<BookingRow | null> {
+  return db.prepare("SELECT * FROM bookings WHERE id = ?").bind(id).first<BookingRow>();
+}
+
 export async function getActiveServices(db: D1Database, bizId: number): Promise<ServiceRow[]> {
   const { results } = await db
     .prepare("SELECT * FROM services WHERE business_id = ? AND is_active = 1 ORDER BY id")
