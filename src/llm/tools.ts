@@ -8,7 +8,7 @@ import { book, cancel, getActiveBooking } from "../engine/booking";
 import { checkAvailability, type PartOfDay } from "../engine/slots";
 import { formatSlotLabel, tsToLocal } from "../engine/time";
 import type { OfferedSlot } from "../conversation";
-import { priceLine } from "./prompt";
+import { horizonEnd, priceLine } from "./prompt";
 
 export const toolDeclarations = [
   {
@@ -165,7 +165,14 @@ export async function dispatchTool(
       slots: capped.map((s) => ({ start: s.startLocal, label: s.label })),
       more_count: Math.max(0, slots.length - 12),
     };
-    if (note) resp.note = note;
+    // Distinguish "beyond the booking window" from "fully booked" so Aiym explains the limit.
+    const lastDate = horizonEnd(ctx.business, ctx.now);
+    if (from > lastDate) {
+      resp.note = "beyond_horizon";
+      resp.horizon_end = lastDate;
+    } else if (note) {
+      resp.note = note;
+    }
     return resp;
   }
 

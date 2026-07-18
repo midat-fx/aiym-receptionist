@@ -2,6 +2,11 @@ import { parseWorkingHours, type WorkingHours } from "../config";
 import type { BusinessRow, ResourceRow, ServiceRow } from "../db";
 import { addDays, todayInTz, weekdayOf, type WeekdayKey } from "../engine/time";
 
+/** Last date open for booking = today + horizon - 1 (YYYY-MM-DD). */
+export function horizonEnd(business: BusinessRow, now: Date): string {
+  return addDays(todayInTz(business.tz, now), business.booking_horizon_days - 1);
+}
+
 export interface NowInfo {
   nowHuman: string; // «сб, 18 июля 2026, 14:00»
   todayIso: string; // YYYY-MM-DD
@@ -81,7 +86,7 @@ export function buildSystemPrompt(
 
 Сейчас: ${now.nowHuman}, часовой пояс ${now.tz} (UTC+5). Сегодня — ${now.todayIso}.
 Ближайшие даты: ${now.dateMap}.
-Неделя начинается с понедельника. Запись возможна максимум на ${business.booking_horizon_days} дней вперёд.
+Неделя начинается с понедельника. Запись возможна максимум на ${business.booking_horizon_days} дней вперёд — последняя доступная дата ${addDays(now.todayIso, business.booking_horizon_days - 1)}. Если клиент просит дату позже неё, вежливо объясни, что запись открыта только до ${addDays(now.todayIso, business.booking_horizon_days - 1)}.
 В контексте записи «к трём» = 15:00, «в час» = 13:00, «полчетвёртого» = 15:30.
 Если клиент говорит «следующий <день недели>» и до ближайшего такого дня меньше 3 дней — уточни, какую дату он имеет в виду.
 
