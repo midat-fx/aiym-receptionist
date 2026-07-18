@@ -4,12 +4,333 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Айым — живое демо</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+    <style>
+      :root {
+        --bg: #f6f4ef; --card: #fff; --ink: #241f2b; --muted: #6f6878;
+        --accent: #7c4dff; --accent-soft: #efe9ff; --line: #e7e2da;
+        --free: #ffffff; --busy: #e9e4dc; --mine: #d9ccff; --pulse: #b79bff;
+        --ok: #2e9e6b;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: var(--ink); background: var(--bg); line-height: 1.45; }
+      a { color: var(--accent); }
+      .wrap { max-width: 1080px; margin: 0 auto; padding: 16px 16px 96px; }
+      header h1 { margin: 8px 0 2px; font-size: 1.5rem; }
+      header p { margin: 0; color: var(--muted); }
+      .notice { background: var(--accent-soft); color: #4a2fa8; border-radius: 12px;
+        padding: 10px 14px; font-size: .9rem; margin: 12px 0; }
+      .layout { display: flex; gap: 16px; align-items: flex-start; }
+      .col { flex: 1 1 0; min-width: 0; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+      .card h2 { font-size: 1.05rem; margin: 0 0 10px; }
+
+      /* chat */
+      .chat { display: flex; flex-direction: column; height: 460px; }
+      .messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+      .msg { max-width: 85%; padding: 8px 12px; border-radius: 14px; font-size: .95rem; white-space: pre-wrap; }
+      .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+      .msg.bot { align-self: flex-start; background: #f0ecff; border-bottom-left-radius: 4px; }
+      .msg.sys { align-self: center; background: transparent; color: var(--muted); font-size: .82rem; }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+      .chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 11px;
+        font-size: .82rem; cursor: pointer; color: var(--ink); text-decoration: none; }
+      .chip:hover { border-color: var(--accent); }
+      .composer { display: flex; gap: 8px; }
+      .composer input { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-size: .95rem; }
+      .composer button { padding: 10px 16px; background: var(--accent); color: #fff; border: 0; border-radius: 12px; cursor: pointer; }
+      .composer button:disabled { opacity: .5; cursor: default; }
+      #ts { margin-top: 8px; }
+
+      /* grid */
+      .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+      .tab { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: .85rem; }
+      .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .grid-scroll { overflow-x: auto; }
+      table.grid { border-collapse: collapse; width: 100%; font-size: .78rem; }
+      table.grid th { font-weight: 600; padding: 6px 4px; text-align: center; color: var(--muted); position: sticky; top: 0; background: var(--card); }
+      table.grid th .role { display: block; font-weight: 400; font-size: .68rem; }
+      table.grid td { border: 1px solid var(--line); padding: 0; text-align: center; height: 26px; }
+      td.time { color: var(--muted); border: 0; padding-right: 6px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .slot { display: block; width: 100%; height: 100%; min-height: 24px; line-height: 24px; }
+      .slot.free { background: var(--free); }
+      .slot.busy { background: var(--busy); color: transparent; }
+      .slot.mine { background: var(--mine); color: #40279c; font-size: .7rem; }
+      .slot.pulse { animation: pulse 1.2s ease; }
+      @keyframes pulse { 0% { background: var(--pulse); } 100% {} }
+      .legend { display: flex; gap: 14px; margin-top: 8px; font-size: .78rem; color: var(--muted); }
+      .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border: 1px solid var(--line); border-radius: 3px; margin-right: 5px; vertical-align: -2px; }
+      .legend .lf::before { background: var(--free); }
+      .legend .lb::before { background: var(--busy); }
+      .legend .lm::before { background: var(--mine); }
+
+      /* owner panel */
+      .owner .tg-card { background: #f7fbff; border: 1px solid #d8e8fb; border-radius: 12px; padding: 10px 12px; font-size: .88rem; }
+      .owner .tg-card .h { font-weight: 600; margin-bottom: 4px; }
+      .feed { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .feed li { border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: .85rem; }
+      .feed .muted { color: var(--muted); }
+      .audio-row { display: flex; flex-direction: column; gap: 8px; }
+      .audio-row .item { font-size: .85rem; }
+      audio { width: 100%; }
+
+      /* sticky CTA */
+      .cta { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--line);
+        padding: 10px 16px; display: flex; justify-content: center; }
+      .cta a { background: var(--accent); color: #fff; text-decoration: none; padding: 11px 22px; border-radius: 12px; font-weight: 600; }
+      .grid-cols { display: flex; flex-direction: column; gap: 16px; }
+      .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: var(--ok); color: #fff;
+        padding: 9px 16px; border-radius: 999px; font-size: .88rem; opacity: 0; transition: opacity .3s; pointer-events: none; }
+      .toast.show { opacity: 1; }
+      @media (max-width: 760px) {
+        .layout { flex-direction: column; }
+        .col { width: 100%; }
+        .chat { height: 380px; }
+      }
+    </style>
   </head>
   <body>
-    <!-- Stub (stage 0). Full chat + live grid per §5.1 is built in stage 4. -->
-    <main>
-      <h1>Живое демо</h1>
-      <p>Скоро здесь можно будет записаться к Айым.</p>
-    </main>
+    <div class="wrap">
+      <header>
+        <h1>Айым — живое демо</h1>
+        <p>Салон «Керемет» (вымышленный) · Алматы</p>
+      </header>
+      <div class="notice">
+        Это живое демо: бронь реально пишется в базу и сразу видна в сетке справа. Каждую ночь данные сбрасываются.
+      </div>
+
+      <div class="layout">
+        <!-- chat -->
+        <div class="col">
+          <div class="card chat">
+            <h2>Напишите Айым</h2>
+            <div class="messages" id="messages"></div>
+            <div class="chips" id="chips"></div>
+            <div class="composer">
+              <input id="input" type="text" placeholder="Напишите сообщение…" autocomplete="off" maxlength="500" />
+              <button id="send">→</button>
+            </div>
+            <div id="ts"></div>
+          </div>
+
+          <div class="card owner" style="margin-top:16px">
+            <h2>Что видит владелец</h2>
+            <div class="tg-card">
+              <div class="h">🔔 Telegram · Айым</div>
+              <div id="tg-mock">🆕 Новая запись придёт сюда, как только клиент забронирует.</div>
+            </div>
+            <ul class="feed" id="feed"></ul>
+          </div>
+        </div>
+
+        <!-- grid + audio -->
+        <div class="col">
+          <div class="grid-cols">
+            <div class="card">
+              <h2>Живое расписание</h2>
+              <div class="tabs" id="tabs"></div>
+              <div class="grid-scroll"><table class="grid" id="grid"></table></div>
+              <div class="legend">
+                <span class="lf">свободно</span><span class="lb">занято</span><span class="lm">вы</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>Послушайте Айым</h2>
+              <div class="audio-row">
+                <div class="item">🎙 Голосовое клиента:<audio controls preload="none" src="/assets/call-in.mp3"></audio></div>
+                <div class="item">💬 Ответ Айым:<audio controls preload="none" src="/assets/call-out.mp3"></audio></div>
+                <div class="item muted" style="color:var(--muted);font-size:.8rem">Голос озвучит ElevenLabs — аудио добавятся на следующем этапе.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cta"><a href="/landing#price">Подключить своему бизнесу</a></div>
+    <div class="toast" id="toast"></div>
+
+    <script>
+      const BIZ = "demo-salon";
+      const $ = (id) => document.getElementById(id);
+      let CFG = { turnstile_sitekey: "1x00000000000000000000AA", bot: "aiym_admin_bot" };
+      let tsToken = null, verified = false, sending = false;
+
+      // session id
+      let session = sessionStorage.getItem("aiym_session");
+      if (!session) { session = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)); sessionStorage.setItem("aiym_session", session); }
+
+      const CHIPS = [
+        { t: "Запишите меня завтра на 15:00 на маникюр" },
+        { t: "Сколько стоит окрашивание?" },
+        { t: "Хочу к Айгерим на женскую стрижку в субботу утром" },
+        { t: "Перенесите мою запись на час позже" },
+        { t: "🎙 Отправить Айым голосовое в Telegram", link: true },
+      ];
+
+      function addMsg(text, cls) {
+        const d = document.createElement("div");
+        d.className = "msg " + cls;
+        d.textContent = text;
+        $("messages").appendChild(d);
+        $("messages").scrollTop = $("messages").scrollHeight;
+        return d;
+      }
+
+      function renderChips() {
+        const box = $("chips");
+        CHIPS.forEach((c) => {
+          let el;
+          if (c.link) {
+            el = document.createElement("a");
+            el.href = "https://t.me/" + CFG.bot + "?start=voice";
+            el.target = "_blank"; el.rel = "noopener";
+          } else {
+            el = document.createElement("button");
+            el.onclick = () => { $("input").value = c.t; send(); };
+          }
+          el.className = "chip";
+          el.textContent = c.t;
+          box.appendChild(el);
+        });
+      }
+
+      function toast(msg) {
+        const t = $("toast"); t.textContent = msg; t.classList.add("show");
+        setTimeout(() => t.classList.remove("show"), 2200);
+      }
+
+      async function send() {
+        const text = $("input").value.trim();
+        if (!text || sending) return;
+        sending = true; $("send").disabled = true;
+        $("input").value = "";
+        addMsg(text, "user");
+        const typing = addMsg("Айым печатает…", "sys");
+        try {
+          const body = { biz: BIZ, session_id: session, text };
+          if (!verified && tsToken) body.turnstile_token = tsToken;
+          const res = await fetch("/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+          typing.remove();
+          if (res.status === 403) { addMsg("Пройдите, пожалуйста, проверку «я не робот» ниже и повторите.", "sys"); return; }
+          const data = await res.json();
+          verified = true;
+          addMsg(data.reply || "…", "bot");
+          if (Array.isArray(data.events) && data.events.length) {
+            loadGrid(true);
+            loadFeed();
+            const created = data.events.some((e) => e.type === "booking_created");
+            toast(created ? "Бронь создана ✓" : "Запись обновлена ✓");
+          }
+        } catch (e) {
+          typing.remove();
+          addMsg("Не получилось отправить. Попробуйте ещё раз.", "sys");
+        } finally {
+          sending = false; $("send").disabled = false; $("input").focus();
+        }
+      }
+
+      // ---- grid ----
+      const TABS = [{ label: "Сегодня", off: 0 }, { label: "Завтра", off: 1 }, { label: "Послезавтра", off: 2 }];
+      let activeTab = 1; // default to tomorrow (first day with lots of free slots)
+      let prev = {}; // `${rid}:${start}` -> status, for pulse detection
+
+      function almatyToday() {
+        return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty" }).format(new Date());
+      }
+      function addDaysISO(iso, n) {
+        const [y, m, d] = iso.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d + n));
+        const p = (x) => String(x).padStart(2, "0");
+        return dt.getUTCFullYear() + "-" + p(dt.getUTCMonth() + 1) + "-" + p(dt.getUTCDate());
+      }
+      function dateForTab() { return addDaysISO(almatyToday(), TABS[activeTab].off); }
+
+      function renderTabs() {
+        const box = $("tabs"); box.innerHTML = "";
+        TABS.forEach((t, i) => {
+          const b = document.createElement("button");
+          b.className = "tab" + (i === activeTab ? " active" : "");
+          b.textContent = t.label;
+          b.onclick = () => { activeTab = i; prev = {}; renderTabs(); loadGrid(false); };
+          box.appendChild(b);
+        });
+      }
+
+      async function loadGrid(animate) {
+        const date = dateForTab();
+        let data;
+        try {
+          const res = await fetch("/api/slots?biz=" + BIZ + "&date=" + date + "&session=" + encodeURIComponent(session));
+          data = await res.json();
+        } catch (e) { return; }
+        const resources = data.resources || [];
+        const table = $("grid");
+        const rows = resources.length ? resources[0].cells.length : 0;
+        let html = "<tr><th></th>" + resources.map((r) => "<th>" + r.name + "<span class='role'>" + (r.role || "") + "</span></th>").join("") + "</tr>";
+        for (let i = 0; i < rows; i++) {
+          const time = resources[0].cells[i].start;
+          html += "<tr><td class='time'>" + time + "</td>";
+          for (const r of resources) {
+            const cell = r.cells[i];
+            const key = r.id + ":" + cell.start;
+            const changed = animate && prev[key] && prev[key] === "free" && cell.status !== "free";
+            const label = cell.status === "mine" ? "Вы" : "";
+            html += "<td><span class='slot " + cell.status + (changed ? " pulse" : "") + "'>" + label + "</span></td>";
+            prev[key] = cell.status;
+          }
+          html += "</tr>";
+        }
+        if (!rows) html = "<tr><td class='time'>В этот день салон закрыт</td></tr>";
+        table.innerHTML = html;
+      }
+
+      async function loadFeed() {
+        try {
+          const res = await fetch("/api/demo/owner-feed?biz=" + BIZ);
+          const data = await res.json();
+          const feed = $("feed"); feed.innerHTML = "";
+          const items = data.bookings || [];
+          if (items.length) {
+            const b = items[0];
+            $("tg-mock").textContent = "🆕 Запись: " + b.service + " · " + b.label + " · " + b.master + (b.phone_masked ? " · " + b.phone_masked : "");
+          }
+          items.forEach((b) => {
+            const li = document.createElement("li");
+            li.innerHTML = "<b></b><span class='muted'></span>";
+            li.querySelector("b").textContent = b.service + " — " + b.label;
+            li.querySelector(".muted").textContent = " · " + b.master + " · " + b.client_name + (b.phone_masked ? " · " + b.phone_masked : "");
+            feed.appendChild(li);
+          });
+        } catch (e) {}
+      }
+
+      // ---- turnstile ----
+      window.onloadTurnstile = function () {
+        if (!window.turnstile) return;
+        window.turnstile.render("#ts", {
+          sitekey: CFG.turnstile_sitekey,
+          callback: (tok) => { tsToken = tok; },
+        });
+      };
+
+      async function boot() {
+        try { CFG = await (await fetch("/api/demo/config?biz=" + BIZ)).json(); } catch (e) {}
+        renderChips();
+        renderTabs();
+        addMsg("Здравствуйте! Я Айым, администратор салона «Керемет». Подскажу цены, свободное время и запишу вас. Что вас интересует?", "bot");
+        loadGrid(false); loadFeed();
+        // render turnstile once the script is ready
+        const tryTs = () => { if (window.turnstile) window.onloadTurnstile(); else setTimeout(tryTs, 200); };
+        tryTs();
+        setInterval(() => loadGrid(true), 3000);
+      }
+
+      $("send").onclick = send;
+      $("input").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+      boot();
+    </script>
   </body>
 </html>

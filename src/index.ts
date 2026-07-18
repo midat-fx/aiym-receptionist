@@ -3,11 +3,13 @@ import { handleTurn } from "./chat";
 import { ensureConversation } from "./conversation";
 import { getBusinessByBotId, getBusinessBySlug } from "./db";
 import { seenBefore } from "./dedup";
+import { resetDemo } from "./demoReset";
 import type { Env } from "./env";
 import { todayInTz } from "./engine/time";
 import { markdownToTelegramHtml, splitMessage } from "./format";
 import { checkAndIncrement } from "./limits";
 import { MAIN_KEYBOARD, Telegram } from "./telegram";
+import { handleChat, handleConfig, handleOwnerFeed, handleSlots } from "./web";
 
 interface TgChat {
   id: number;
@@ -44,16 +46,22 @@ export default {
       return handleTgWebhook(request, env, ctx);
     }
     if (method === "POST" && pathname === "/chat") {
-      return NOT_IMPL("stage 4");
+      return handleChat(request, env, ctx);
     }
     if (method === "GET" && pathname === "/api/slots") {
-      return NOT_IMPL("stage 4");
+      return handleSlots(request, env);
     }
     if (method === "GET" && pathname === "/api/demo/owner-feed") {
-      return NOT_IMPL("stage 4");
+      return handleOwnerFeed(request, env);
+    }
+    if (method === "GET" && pathname === "/api/demo/config") {
+      return handleConfig(request, env);
     }
     if (method === "GET" && pathname === "/api/tg/setup") {
       return handleTgSetup(request, env);
+    }
+    if (method === "POST" && pathname === "/admin/api/reset-demo") {
+      return handleResetDemo(request, env);
     }
     if (pathname.startsWith("/admin/api/")) {
       return handleAdmin(request, env);
@@ -62,11 +70,29 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  async scheduled(_controller: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Nightly demo reset (cron 0 22 * * * UTC = 03:00 Almaty). Wired in stage 4.
-    console.log("scheduled tick: resetDemo not wired yet (stage 4)");
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    // Nightly demo reset (cron 0 22 * * * UTC = 03:00 Almaty).
+    try {
+      await resetDemo(env.DB);
+    } catch (e) {
+      console.error("scheduled resetDemo failed:", (e as Error).message);
+    }
   },
 } satisfies ExportedHandler<Env>;
+
+/** POST /admin/api/reset-demo?secret=<WEBHOOK_SECRET> — manual demo reset (proper admin auth in stage 6). */
+async function handleResetDemo(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  if (!env.WEBHOOK_SECRET || url.searchParams.get("secret") !== env.WEBHOOK_SECRET) {
+    return Response.json({ ok: false, error: "pass ?secret=<WEBHOOK_SECRET>" }, { status: 403 });
+  }
+  try {
+    await resetDemo(env.DB);
+    return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });
+  }
+}
 
 async function handleTgWebhook(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   // Telegram authenticates itself with the secret_token set at setWebhook time.
