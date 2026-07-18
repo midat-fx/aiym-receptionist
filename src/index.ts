@@ -1,7 +1,7 @@
 import { handleAdmin } from "./admin";
 import { handleTurn } from "./chat";
 import { ensureConversation } from "./conversation";
-import { getBusinessByBotId, getBusinessBySlug } from "./db";
+import { getBusinessByBotId, getBusinessBySlug, type BusinessRow } from "./db";
 import { seenBefore } from "./dedup";
 import { resetDemo } from "./demoReset";
 import type { Env } from "./env";
@@ -9,6 +9,8 @@ import { todayInTz } from "./engine/time";
 import { markdownToTelegramHtml, splitMessage } from "./format";
 import { checkAndIncrement } from "./limits";
 import { MAIN_KEYBOARD, Telegram } from "./telegram";
+import { transcribeVoice } from "./voice/stt";
+import { synthesizeVoice } from "./voice/tts";
 import { handleChat, handleConfig, handleOwnerFeed, handleSlots } from "./web";
 
 interface TgChat {
@@ -139,15 +141,14 @@ async function processTgMessage(env: Env, botId: number, message: TgMessage, ctx
   if (!business?.tg_bot_token) return; // unknown / unconfigured bot
   const tg = new Telegram(business.tg_bot_token);
   const chatId = message.chat.id;
-  const text = message.text?.trim();
 
   if (message.voice) {
-    // Voice pipeline lands in stage 5.
-    await tg.sendMessage(chatId, "Голосовые я научусь понимать совсем скоро — пока напишите, пожалуйста, текстом 🙏");
-    return;
+    return processVoice(env, business, tg, chatId, message.voice, ctx);
   }
+
+  const text = message.text?.trim();
   if (!text) {
-    await tg.sendMessage(chatId, "Пока я понимаю только текстовые сообщения 🙏");
+    await tg.sendMessage(chatId, "Пока я понимаю только текстовые и голосовые сообщения 🙏");
     return;
   }
   if (text === "/start") {
@@ -164,6 +165,48 @@ async function processTgMessage(env: Env, botId: number, message: TgMessage, ctx
     return;
   }
 
+  await respondTurn(env, business, tg, chatId, text, ctx, false);
+}
+
+/** Transcribe a voice note (with limits + degradation), then run the turn with a spoken reply. */
+async function processVoice(
+  env: Env,
+  business: BusinessRow,
+  tg: Telegram,
+  chatId: number,
+  voice: TgVoice,
+  ctx: ExecutionContext,
+): Promise<void> {
+  if (voice.duration > 60) {
+    await tg.sendMessage(chatId, "Голосовое длинновато — пришлите, пожалуйста, покороче 🙏");
+    return;
+  }
+  const whisper = await checkAndIncrement(env.DB, "whisper", "global", utcDay(), 100);
+  if (!whisper.ok) {
+    await tg.sendMessage(chatId, "Не расслышала 😅 Напишите, пожалуйста, текстом.");
+    return;
+  }
+  await tg.sendChatAction(chatId).catch(() => {});
+  const stt = await transcribeVoice(env, tg, voice.file_id, voice.duration);
+  if (!stt.ok) {
+    await tg.sendMessage(chatId, "Не расслышала 😅 Напишите, пожалуйста, текстом.");
+    return;
+  }
+  // Transparency: echo what was heard before answering.
+  await tg.sendMessage(chatId, `🎙 «${stt.text}»`);
+  await respondTurn(env, business, tg, chatId, stt.text, ctx, true);
+}
+
+/** Shared turn: message limits -> handleTurn -> text reply -> (voice) spoken reply. */
+async function respondTurn(
+  env: Env,
+  business: BusinessRow,
+  tg: Telegram,
+  chatId: number,
+  userText: string,
+  ctx: ExecutionContext,
+  voice: boolean,
+): Promise<void> {
   const day = todayInTz(business.tz, new Date());
   const globalLimit = await checkAndIncrement(env.DB, "global_msg", String(business.id), utcDay(), 300);
   if (!globalLimit.ok) {
@@ -175,11 +218,28 @@ async function processTgMessage(env: Env, botId: number, message: TgMessage, ctx
     await tg.sendMessage(chatId, "На сегодня достаточно сообщений — напишите, пожалуйста, завтра 🙏");
     return;
   }
+  if (voice) {
+    const voiceLimit = await checkAndIncrement(env.DB, "voice", `${business.id}:${chatId}`, day, 5);
+    if (!voiceLimit.ok) {
+      await tg.sendMessage(chatId, "На сегодня достаточно голосовых 🙏 Давайте продолжим текстом.");
+      return;
+    }
+  }
 
   await tg.sendChatAction(chatId).catch(() => {});
   const convo = await ensureConversation(env.DB, business.id, "tg", String(chatId));
-  const { reply } = await handleTurn(env, business, convo, text, ctx);
+  const { reply } = await handleTurn(env, business, convo, userText, ctx);
   await sendReply(tg, chatId, reply);
+
+  if (voice) {
+    await tg.sendChatAction(chatId, "record_voice").catch(() => {});
+    const audio = await synthesizeVoice(env, reply);
+    if (audio) {
+      const spoken = reply.slice(0, 160);
+      const caption = `${spoken}${reply.length > 160 ? "…" : ""}\nголос: elevenlabs.io`;
+      await tg.sendVoice(chatId, audio, caption).catch((e: unknown) => console.error("sendVoice failed:", (e as Error).message));
+    }
+  }
 }
 
 /** One-visit webhook registration: GET /api/tg/setup?secret=<WEBHOOK_SECRET>&biz=<slug>. */
