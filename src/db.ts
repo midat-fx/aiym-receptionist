@@ -102,6 +102,10 @@ export async function getBusinessById(db: D1Database, id: number): Promise<Busin
   return db.prepare("SELECT * FROM businesses WHERE id = ?").bind(id).first<BusinessRow>();
 }
 
+export async function getBusinessByAdminHash(db: D1Database, hash: string): Promise<BusinessRow | null> {
+  return db.prepare("SELECT * FROM businesses WHERE admin_token_hash = ?").bind(hash).first<BusinessRow>();
+}
+
 export async function getBookingById(db: D1Database, id: string): Promise<BookingRow | null> {
   return db.prepare("SELECT * FROM bookings WHERE id = ?").bind(id).first<BookingRow>();
 }

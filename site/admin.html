@@ -4,12 +4,152 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Айым — админка</title>
+    <style>
+      :root { --bg:#f6f4ef; --card:#fff; --ink:#241f2b; --muted:#6f6878; --accent:#7c4dff; --line:#e7e2da; --ok:#2e9e6b; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+      .wrap { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; }
+      h1 { font-size: 1.4rem; margin: 4px 0 12px; }
+      .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:16px; }
+      input[type=password], input[type=text] { padding:10px 12px; border:1px solid var(--line); border-radius:10px; font-size:.95rem; width:100%; }
+      button { padding:9px 16px; background:var(--accent); color:#fff; border:0; border-radius:10px; cursor:pointer; font-size:.9rem; }
+      button.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      .tabs { display:flex; gap:8px; margin-bottom:12px; }
+      .tab { background:#fff; border:1px solid var(--line); color:var(--ink); }
+      .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+      table { width:100%; border-collapse:collapse; font-size:.88rem; }
+      th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+      th { color:var(--muted); font-weight:600; }
+      .status { font-size:.78rem; padding:2px 8px; border-radius:999px; background:#eee; }
+      .status.new { background:#eef; } .status.contacted { background:#fef7e0; }
+      .status.converted { background:#e4f6ec; color:#1c7a4a; } .status.rejected { background:#f6e4e4; color:#a33; }
+      .cancelled { color:var(--muted); text-decoration: line-through; }
+      select { padding:5px 8px; border:1px solid var(--line); border-radius:8px; }
+      .muted { color:var(--muted); }
+      .hidden { display:none; }
+      .toast { position:fixed; top:14px; left:50%; transform:translateX(-50%); background:var(--ok); color:#fff; padding:9px 16px; border-radius:999px; opacity:0; transition:opacity .3s; }
+      .toast.show { opacity:1; }
+    </style>
   </head>
   <body>
-    <!-- Stub (stage 0). Full admin per §6/§8 stage 6 is built later. -->
-    <main>
-      <h1>Админка</h1>
-      <p>Вход по токену. Раздел в разработке.</p>
-    </main>
+    <div class="wrap">
+      <h1>Айым — админка</h1>
+
+      <div class="card" id="login">
+        <p class="muted">Введите админ-токен вашего салона.</p>
+        <div class="row">
+          <input type="password" id="token" placeholder="Админ-токен" style="flex:1" />
+          <button id="loginBtn">Войти</button>
+        </div>
+        <p id="loginErr" class="muted"></p>
+      </div>
+
+      <div id="app" class="hidden">
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <b id="bizName"></b>
+            <div class="row">
+              <button class="ghost" id="resetBtn">Сбросить демо</button>
+              <button class="ghost" id="logoutBtn">Выйти</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" id="tabBookings">Записи</button>
+          <button class="tab" id="tabLeads">Заявки</button>
+        </div>
+
+        <div class="card" id="bookingsCard">
+          <table><thead><tr><th>Когда</th><th>Услуга</th><th>Мастер</th><th>Клиент</th><th>Телефон</th><th>Канал</th><th></th></tr></thead>
+          <tbody id="bookingsBody"></tbody></table>
+        </div>
+
+        <div class="card hidden" id="leadsCard">
+          <table><thead><tr><th>Дата</th><th>Что нужно</th><th>Клиент</th><th>Телефон</th><th>Статус</th></tr></thead>
+          <tbody id="leadsBody"></tbody></table>
+        </div>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let TOKEN = localStorage.getItem("aiym_admin_token") || "";
+
+      function toast(m) { const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1800); }
+      async function api(path, opts = {}) {
+        return fetch(path, { ...opts, headers: { ...(opts.headers||{}), authorization: "Bearer " + TOKEN, "content-type": "application/json" } });
+      }
+      function td(text, cls) { const el=document.createElement("td"); el.textContent=text==null?"":String(text); if(cls) el.className=cls; return el; }
+
+      async function loadBookings() {
+        const res = await api("/admin/api/bookings");
+        const data = await res.json();
+        const body = $("bookingsBody"); body.innerHTML = "";
+        (data.bookings||[]).forEach((b) => {
+          const tr = document.createElement("tr");
+          if (b.status === "cancelled") tr.className = "cancelled";
+          tr.appendChild(td(b.label));
+          tr.appendChild(td(b.service));
+          tr.appendChild(td(b.master));
+          tr.appendChild(td(b.client_name));
+          tr.appendChild(td(b.client_phone));
+          tr.appendChild(td(b.channel));
+          const act = document.createElement("td");
+          if (b.status === "confirmed") {
+            const btn = document.createElement("button"); btn.className="ghost"; btn.textContent="Отменить";
+            btn.onclick = async () => { await api("/admin/api/booking-cancel",{method:"POST",body:JSON.stringify({booking_id:b.id})}); toast("Запись отменена"); loadBookings(); };
+            act.appendChild(btn);
+          } else act.textContent = "отменена";
+          tr.appendChild(act);
+          body.appendChild(tr);
+        });
+        if (!(data.bookings||[]).length) body.innerHTML = "<tr><td colspan=7 class='muted'>Пока нет записей</td></tr>";
+      }
+
+      async function loadLeads() {
+        const res = await api("/admin/api/leads");
+        const data = await res.json();
+        const body = $("leadsBody"); body.innerHTML = "";
+        const STATUSES = { new:"новая", contacted:"связались", converted:"записан", rejected:"отказ" };
+        (data.leads||[]).forEach((l) => {
+          const tr = document.createElement("tr");
+          tr.appendChild(td((l.created_at||"").slice(0,16)));
+          tr.appendChild(td(l.summary || l.service));
+          tr.appendChild(td(l.name));
+          tr.appendChild(td(l.phone));
+          const st = document.createElement("td");
+          const sel = document.createElement("select");
+          Object.keys(STATUSES).forEach((k) => { const o=document.createElement("option"); o.value=k; o.textContent=STATUSES[k]; if(k===l.status)o.selected=true; sel.appendChild(o); });
+          sel.onchange = async () => { await api("/admin/api/lead-status",{method:"POST",body:JSON.stringify({lead_id:l.id,status:sel.value})}); toast("Статус обновлён"); };
+          st.appendChild(sel);
+          tr.appendChild(st);
+          body.appendChild(tr);
+        });
+        if (!(data.leads||[]).length) body.innerHTML = "<tr><td colspan=5 class='muted'>Пока нет заявок</td></tr>";
+      }
+
+      async function enter() {
+        const res = await api("/admin/api/me");
+        if (!res.ok) { $("loginErr").textContent = "Токен не подошёл."; return; }
+        const me = await res.json();
+        localStorage.setItem("aiym_admin_token", TOKEN);
+        $("bizName").textContent = me.business;
+        $("resetBtn").style.display = me.is_demo ? "" : "none";
+        $("login").classList.add("hidden");
+        $("app").classList.remove("hidden");
+        loadBookings();
+      }
+
+      $("loginBtn").onclick = () => { TOKEN = $("token").value.trim(); enter(); };
+      $("logoutBtn").onclick = () => { localStorage.removeItem("aiym_admin_token"); location.reload(); };
+      $("resetBtn").onclick = async () => { await api("/admin/api/reset-demo",{method:"POST"}); toast("Демо сброшено"); loadBookings(); };
+      $("tabBookings").onclick = () => { $("tabBookings").classList.add("active"); $("tabLeads").classList.remove("active"); $("bookingsCard").classList.remove("hidden"); $("leadsCard").classList.add("hidden"); loadBookings(); };
+      $("tabLeads").onclick = () => { $("tabLeads").classList.add("active"); $("tabBookings").classList.remove("active"); $("leadsCard").classList.remove("hidden"); $("bookingsCard").classList.add("hidden"); loadLeads(); };
+
+      if (TOKEN) enter();
+    </script>
   </body>
 </html>

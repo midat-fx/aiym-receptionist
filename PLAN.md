@@ -568,3 +568,19 @@ flowchart LR
 **БЛОКЕРЫ (шаги владельца, live-приёмка):**
 1. STT-приёмка «голосовое → 🎙-транскрипт → текстовый ответ» требует Telegram-бота (тот же BotFather-токен из этапа 3) — принять голосовое из TG ассистент не может без бота.
 2. TTS-приёмка «после ключа»: владельцу зарегистрировать ElevenLabs (free, карта не нужна), выбрать русский женский голос, `wrangler secret put ELEVENLABS_API_KEY` + прописать `ELEVENLABS_VOICE_ID` в vars, сгенерировать в web-UI 3 mp3 в `site/assets/{greeting,call-in,call-out}.mp3` (не тратит API-квоту). Без ключа модуль tts тихо выключен — весь текстовый контур работает.
+
+### Этап 6 — CRM и админка ✅ 18.07.2026 (проверено на деплое; live-уведомление владельцу — шаг владельца)
+
+**Сделано:**
+- `crm/adapter.ts dispatchCrm` — fan-out по адаптерам, каждый push в `ctx.waitUntil` c `.catch` (сбой CRM никогда не ломает ответ). `builtin` (всегда вкл, TG-уведомление владельцу при наличии `owner_tg_chat_id`), `sheets` (POST JSON в Apps Script Web App), `bitrix24` (мок `crm.lead.add.json`, только при `BITRIX_ENABLED=true`), `amocrm` (честная заглушка). `scripts/apps-script-sheets.gs` — копипаст владельцу.
+- Диспетчер копит `crmEvents` (booking_created/cancelled, lead_created) → `handleTurn` их разливает; handoff тоже пингует владельца. Команда `/owner <admin_token>` в TG сверяет sha256 с `admin_token_hash` и биндит `owner_tg_chat_id`.
+- `admin.ts` (Bearer→`getBusinessByAdminHash`): `GET /me|/bookings|/leads`, `POST /lead-status|/booking-cancel|/reset-demo` (reset — только для is_demo). `admin.html`: вход по токену (localStorage), вкладки Записи/Заявки, отмена брони, смена статуса лида, кнопка сброса демо. Секретный reset-роут из этапа 4 убран — reset теперь по admin-токену; крон дёргает resetDemo напрямую.
+
+**Приёмка пройдена:**
+- **Лид через qualifyLead виден в админке и меняет статус** (живьём): `/chat` «оставьте заявку, Гульнара, 8 700 111 22 33» → Айым сохранила заявку → `GET /admin/api/leads` показал лид (телефон нормализован в `+77001112233`) → `POST /admin/api/lead-status`=converted → статус сменился.
+- **Sheets: POST уходит с полным JSON** (юнит, `crm.test`): точное совпадение тела запроса с сериализованным событием.
+- **Сбой адаптера (мок 500) не ломает ответ клиенту** (юнит): `dispatchCrm` не бросает, зашедуленный push с реджектом проглочен.
+- Admin-auth: `/me` → «Керемет», 6 сид-броней с именами (админ видит ПД, §9.9), без токена → 401.
+- `tsc` — 0; `vitest run` — **57 тестов** зелёные (crm 2 добавлены).
+
+**БЛОКЕР (шаг владельца):** «бронь в демо → владельцу приходит уведомление» требует привязанного `owner_tg_chat_id` (команда `/owner <токен>` в боте) и самого бота — логика builtin-адаптера и биндинга готова, но живая доставка в Telegram нуждается в BotFather-токене. Демо-панель «Что видит владелец» показывает уведомления и без бота.

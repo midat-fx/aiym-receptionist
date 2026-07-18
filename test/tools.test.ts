@@ -25,6 +25,7 @@ function makeCtx(overrides: Partial<DispatchContext> = {}): DispatchContext {
     tgChatId: 5001,
     lastOffered: [],
     events: [],
+    crmEvents: [],
     ...overrides,
   };
 }

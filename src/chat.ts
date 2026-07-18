@@ -1,10 +1,12 @@
-import { getActiveServices, getResources, type BusinessRow, type ConversationRow, type ServiceRow } from "./db";
+import { parseCrmConfig } from "./config";
 import {
   getHistory,
   getOffered,
   saveConversation,
   type HistoryMsg,
 } from "./conversation";
+import { dispatchCrm } from "./crm/adapter";
+import { getActiveServices, getResources, type BusinessRow, type ConversationRow, type ServiceRow } from "./db";
 import { checkAvailability } from "./engine/slots";
 import { addDays, todayInTz } from "./engine/time";
 import type { Env } from "./env";
@@ -46,7 +48,7 @@ export async function handleTurn(
   business: BusinessRow,
   convo: ConversationRow,
   userText: string,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ): Promise<TurnResult> {
   const services = await getActiveServices(env.DB, business.id);
   const resources = await getResources(env.DB, business.id);
@@ -67,6 +69,7 @@ export async function handleTurn(
     webSessionId: convo.channel === "web" ? convo.external_id : undefined,
     lastOffered: getOffered(convo),
     events: [],
+    crmEvents: [],
     clientName: convo.client_name ?? undefined,
     clientPhone: convo.client_phone ?? undefined,
   };
@@ -88,6 +91,21 @@ export async function handleTurn(
     clientName: dctx.clientName ?? convo.client_name,
     clientPhone: dctx.clientPhone ?? convo.client_phone,
   });
+
+  // Fan out to CRM adapters (each push is isolated; a CRM failure never affects the reply).
+  if (dctx.crmEvents.length) {
+    const crmCfg = parseCrmConfig(business.crm_config);
+    for (const ev of dctx.crmEvents) dispatchCrm(ev, crmCfg, env, ctx);
+  }
+  // Handoff to a human is also surfaced to the owner as a lead-style ping.
+  if (dctx.handoffReason) {
+    dispatchCrm(
+      { type: "booking_cancelled", business_id: business.id, summary: `Нужен человек: ${dctx.handoffReason}` },
+      parseCrmConfig(business.crm_config),
+      env,
+      ctx,
+    );
+  }
 
   return { reply, events: dctx.events, handoffReason: dctx.handoffReason };
 }

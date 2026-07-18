@@ -1,6 +1,7 @@
 import { handleAdmin } from "./admin";
 import { handleTurn } from "./chat";
 import { ensureConversation } from "./conversation";
+import { sha256hex } from "./crypto";
 import { getBusinessByBotId, getBusinessBySlug, type BusinessRow } from "./db";
 import { seenBefore } from "./dedup";
 import { resetDemo } from "./demoReset";
@@ -62,9 +63,6 @@ export default {
     if (method === "GET" && pathname === "/api/tg/setup") {
       return handleTgSetup(request, env);
     }
-    if (method === "POST" && pathname === "/admin/api/reset-demo") {
-      return handleResetDemo(request, env);
-    }
     if (pathname.startsWith("/admin/api/")) {
       return handleAdmin(request, env);
     }
@@ -81,20 +79,6 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
-
-/** POST /admin/api/reset-demo?secret=<WEBHOOK_SECRET> — manual demo reset (proper admin auth in stage 6). */
-async function handleResetDemo(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  if (!env.WEBHOOK_SECRET || url.searchParams.get("secret") !== env.WEBHOOK_SECRET) {
-    return Response.json({ ok: false, error: "pass ?secret=<WEBHOOK_SECRET>" }, { status: 403 });
-  }
-  try {
-    await resetDemo(env.DB);
-    return Response.json({ ok: true });
-  } catch (e) {
-    return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });
-  }
-}
 
 async function handleTgWebhook(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   // Telegram authenticates itself with the secret_token set at setWebhook time.
@@ -160,8 +144,17 @@ async function processTgMessage(env: Env, botId: number, message: TgMessage, ctx
     return;
   }
   if (text.startsWith("/owner")) {
-    // Owner binding via admin token is wired in stage 6.
-    await tg.sendMessage(chatId, "Привязка владельца появится на следующем этапе 🙂");
+    const token = text.slice("/owner".length).trim();
+    if (!token) {
+      await tg.sendMessage(chatId, "Чтобы получать записи сюда, отправьте: /owner <ваш админ-токен>");
+      return;
+    }
+    if ((await sha256hex(token)) === business.admin_token_hash) {
+      await env.DB.prepare("UPDATE businesses SET owner_tg_chat_id = ? WHERE id = ?").bind(chatId, business.id).run();
+      await tg.sendMessage(chatId, "Готово ✓ Уведомления о новых записях и заявках будут приходить сюда.");
+    } else {
+      await tg.sendMessage(chatId, "Токен не подошёл. Проверьте и отправьте ещё раз.");
+    }
     return;
   }
 

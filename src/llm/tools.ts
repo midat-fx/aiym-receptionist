@@ -1,6 +1,7 @@
 // Gemini functionDeclarations — Appendix C, applied verbatim, plus the dispatcher
 // (validation + last_offered lock + engine calls).
 
+import type { CrmEvent } from "../crm/adapter";
 import type { BusinessRow, Channel, ResourceRow, ServiceRow } from "../db";
 import { countActiveBookings, insertLead } from "../db";
 import { book, cancel, getActiveBooking } from "../engine/booking";
@@ -107,6 +108,7 @@ export interface DispatchContext {
   // accumulators mutated by the dispatcher
   lastOffered: OfferedSlot[];
   events: TurnEvent[];
+  crmEvents: CrmEvent[];
   clientName?: string;
   clientPhone?: string;
   handoffReason?: string;
@@ -205,6 +207,18 @@ export async function dispatchTool(
       if (clientName) ctx.clientName = clientName;
       if (phone) ctx.clientPhone = phone;
       ctx.events.push({ type: "booking_created" });
+      const master = ctx.resources.find((r) => r.id === svc.resource_id)?.name;
+      ctx.crmEvents.push({
+        type: "booking_created",
+        business_id: ctx.business.id,
+        summary: `${clientName || "Клиент"}: ${svc.name}, ${offered.label}`,
+        service: svc.name,
+        label: offered.label,
+        master,
+        client_name: clientName || undefined,
+        client_phone: phone,
+        booking_id: result.booking.id,
+      });
       return { ok: true, confirmation: { service: svc.name, label: offered.label, client_name: clientName } };
     }
     ctx.lastOffered = offeredToLast(serviceId, result.alternatives);
@@ -233,6 +247,12 @@ export async function dispatchTool(
     const res = await cancel(ctx.db, by, ctx.now);
     if (res.ok) {
       ctx.events.push({ type: "booking_cancelled" });
+      const svc = ctx.services.find((s) => s.id === res.booking.service_id);
+      ctx.crmEvents.push({
+        type: "booking_cancelled",
+        business_id: ctx.business.id,
+        summary: `Отмена: ${svc?.name ?? "запись"}, ${formatSlotLabel(res.booking.start_ts, tz)}`,
+      });
       return { ok: true };
     }
     return { ok: false, reason: "not_found" };
@@ -240,16 +260,26 @@ export async function dispatchTool(
 
   if (name === "qualifyLead") {
     const phone = args.phone != null ? normalizePhone(String(args.phone)) : null;
+    const summary = asString(args.summary) ?? "Заявка";
+    const service = asString(args.service) ?? null;
     await insertLead(ctx.db, {
       businessId: ctx.business.id,
       name: asString(args.name) ?? null,
       phone,
-      service: asString(args.service) ?? null,
+      service,
       budget: asString(args.budget) ?? null,
       urgency: asString(args.urgency) ?? null,
-      summary: asString(args.summary) ?? "Заявка",
+      summary,
       channel: ctx.channel,
       tgChatId: ctx.tgChatId ?? null,
+    });
+    ctx.crmEvents.push({
+      type: "lead_created",
+      business_id: ctx.business.id,
+      summary,
+      service: service ?? undefined,
+      client_name: asString(args.name),
+      client_phone: phone ?? undefined,
     });
     return { ok: true };
   }
