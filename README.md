@@ -66,7 +66,7 @@ Real D1 in `workerd` via `@cloudflare/vitest-pool-workers` — the sacred princi
 ```bash
 npm test            # 57 tests: time, slots, booking (incl. concurrent double-book), tools, tts, crm
 npm run typecheck   # tsc --noEmit
-npm run test:dates  # 15-phrase date-eval through real Gemini (not in CI)
+GEMINI_API_KEY=... npm run test:dates   # 15-phrase date-eval through real Gemini (not in CI)
 ```
 
 The concurrency test fires two `book()` calls at the same slot and asserts exactly one row survives; the date-eval scores 15/15 on natural-language dates ("к трём" → 15:00, out-of-window → explains the limit).

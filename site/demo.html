@@ -141,7 +141,7 @@
               <div class="audio-row">
                 <div class="item">🎙 Голосовое клиента:<audio controls preload="none" src="/assets/call-in.mp3"></audio></div>
                 <div class="item">💬 Ответ Айым:<audio controls preload="none" src="/assets/call-out.mp3"></audio></div>
-                <div class="item muted" style="color:var(--muted);font-size:.8rem">Голос озвучит ElevenLabs — аудио добавятся на следующем этапе.</div>
+                <div class="item muted" style="color:var(--muted);font-size:.8rem">Голос синтезирован <a href="https://elevenlabs.io">ElevenLabs</a>.</div>
               </div>
             </div>
           </div>
@@ -218,6 +218,7 @@
           const data = await res.json();
           verified = true;
           addMsg(data.reply || "…", "bot");
+          // events is empty on an idempotent repeat — nothing in the calendar changed.
           if (Array.isArray(data.events) && data.events.length) {
             loadGrid(true);
             loadFeed();

@@ -133,23 +133,33 @@ export async function getResources(db: D1Database, bizId: number): Promise<Resou
   return results ?? [];
 }
 
-/** Count a client's active (confirmed) bookings — for the 2-per-client demo limit. */
+/**
+ * Count a client's UPCOMING (confirmed, not yet finished) bookings — for the
+ * 2-per-client limit. Past visits must not count: nothing retires them out of
+ * 'confirmed', so without the bound a returning client is locked out forever.
+ */
 export async function countActiveBookings(
   db: D1Database,
   bizId: number,
   by: { tgChatId?: number; webSessionId?: string },
+  now: Date = new Date(),
 ): Promise<number> {
+  const nowTs = Math.floor(now.getTime() / 1000);
   if (by.tgChatId != null) {
     const row = await db
-      .prepare("SELECT count(*) AS n FROM bookings WHERE business_id = ? AND status = 'confirmed' AND tg_chat_id = ?")
-      .bind(bizId, by.tgChatId)
+      .prepare(
+        "SELECT count(*) AS n FROM bookings WHERE business_id = ? AND status = 'confirmed' AND end_ts > ? AND tg_chat_id = ?",
+      )
+      .bind(bizId, nowTs, by.tgChatId)
       .first<{ n: number }>();
     return row?.n ?? 0;
   }
   if (by.webSessionId) {
     const row = await db
-      .prepare("SELECT count(*) AS n FROM bookings WHERE business_id = ? AND status = 'confirmed' AND web_session_id = ?")
-      .bind(bizId, by.webSessionId)
+      .prepare(
+        "SELECT count(*) AS n FROM bookings WHERE business_id = ? AND status = 'confirmed' AND end_ts > ? AND web_session_id = ?",
+      )
+      .bind(bizId, nowTs, by.webSessionId)
       .first<{ n: number }>();
     return row?.n ?? 0;
   }

@@ -37,11 +37,15 @@ export async function resetDemo(db: D1Database, now: Date = new Date()): Promise
     db.prepare("DELETE FROM bookings WHERE business_id = ?").bind(biz.id),
     db.prepare("DELETE FROM leads WHERE business_id = ?").bind(biz.id),
     db.prepare("DELETE FROM conversations WHERE business_id = ?").bind(biz.id),
-    db.prepare("DELETE FROM rate_limits WHERE day < ?").bind(cutoff),
+    // Daily rows only. MONTHLY rows use 7-char 'YYYY-MM' keys, which sort BEFORE any
+    // same-month 'YYYY-MM-DD' under BINARY collation — an unqualified `day < cutoff`
+    // silently wiped the ElevenLabs monthly credit counter every night.
+    db.prepare("DELETE FROM rate_limits WHERE length(day) = 10 AND day < ?").bind(cutoff),
+    db.prepare("DELETE FROM rate_limits WHERE length(day) = 7 AND day < ?").bind(cutoff.slice(0, 7)),
   ]);
 
   const tomorrow = addDays(today, 1);
-  const nextSat = nextWeekday(tomorrow, "sat"); // upcoming Saturday, always in the future
+  const nextSat = nextWeekday(tomorrow, "sat"); // upcoming Saturday (=== tomorrow when today is Friday)
   const errors: string[] = [];
 
   const seed = async (serviceId: number | undefined, localDateTime: string, name: string): Promise<void> => {
@@ -65,8 +69,9 @@ export async function resetDemo(db: D1Database, now: Date = new Date()): Promise
   // Айгерим nearest Saturday: two women's cuts 10:00 & 11:00 (busy morning -> chip 3 gets 12:00/12:30).
   await seed(ZHEN, `${nextSat}T10:00`, "Салтанат");
   await seed(ZHEN, `${nextSat}T11:00`, "Мадина");
-  // Scattered, not touching the above.
-  await seed(MANI, `${nextSat}T12:00`, "Динара");
+  // Scattered, not touching the above. On a Friday run nextSat === tomorrow, where Инна's
+  // 12:00 cell is already held by the seed above — skip rather than log a bogus conflict.
+  if (nextSat !== tomorrow) await seed(MANI, `${nextSat}T12:00`, "Динара");
   await seed(NARASH, `${tomorrow}T13:00`, "Салтанат");
 
   if (errors.length) console.error("resetDemo seed issues:", errors.join(" | "));

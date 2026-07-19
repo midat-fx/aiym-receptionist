@@ -11,7 +11,7 @@ import { markdownToTelegramHtml, splitMessage } from "./format";
 import { checkAndIncrement } from "./limits";
 import { MAIN_KEYBOARD, Telegram } from "./telegram";
 import { transcribeVoice } from "./voice/stt";
-import { synthesizeVoice } from "./voice/tts";
+import { speakable, synthesizeVoice } from "./voice/tts";
 import { handleChat, handleConfig, handleOwnerFeed, handleSlots } from "./web";
 
 interface TgChat {
@@ -135,12 +135,15 @@ async function processTgMessage(env: Env, botId: number, message: TgMessage, ctx
     await tg.sendMessage(chatId, "Пока я понимаю только текстовые и голосовые сообщения 🙏");
     return;
   }
-  if (text === "/start") {
-    await tg.sendMessage(
-      chatId,
-      `Здравствуйте! Я ${business.assistant_name}, администратор «${business.name}». Помогу записаться, подскажу цены и свободное время. Что вас интересует?`,
-      { reply_markup: MAIN_KEYBOARD },
-    );
+  // Telegram delivers deep links as «/start <payload>», so match the command, not the whole text.
+  const [command, payload] = text.split(/\s+/, 2);
+  if (command === "/start") {
+    const intro = `Здравствуйте! Я ${business.assistant_name}, администратор «${business.name}». Помогу записаться, подскажу цены и свободное время.`;
+    const tail =
+      payload === "voice"
+        ? " Отправьте голосовое — я расслышу и отвечу голосом 🎙"
+        : " Что вас интересует?";
+    await tg.sendMessage(chatId, intro + tail, { reply_markup: MAIN_KEYBOARD });
     return;
   }
   if (text.startsWith("/owner")) {
@@ -211,11 +214,14 @@ async function respondTurn(
     await tg.sendMessage(chatId, "На сегодня достаточно сообщений — напишите, пожалуйста, завтра 🙏");
     return;
   }
+  // Over the voice quota we answer in TEXT — we never discard a request that is
+  // already transcribed and in hand (§5: «6-я … → только текст»).
+  let speak = voice;
   if (voice) {
     const voiceLimit = await checkAndIncrement(env.DB, "voice", `${business.id}:${chatId}`, day, 5);
     if (!voiceLimit.ok) {
-      await tg.sendMessage(chatId, "На сегодня достаточно голосовых 🙏 Давайте продолжим текстом.");
-      return;
+      speak = false;
+      await tg.sendMessage(chatId, "На сегодня достаточно голосовых 🙏 Отвечу текстом.");
     }
   }
 
@@ -224,12 +230,13 @@ async function respondTurn(
   const { reply } = await handleTurn(env, business, convo, userText, ctx);
   await sendReply(tg, chatId, reply);
 
-  if (voice) {
+  if (speak) {
     await tg.sendChatAction(chatId, "record_voice").catch(() => {});
     const audio = await synthesizeVoice(env, reply);
     if (audio) {
-      const spoken = reply.slice(0, 160);
-      const caption = `${spoken}${reply.length > 160 ? "…" : ""}\nголос: elevenlabs.io`;
+      // Same transform the voice used, so the caption matches what is actually spoken.
+      const spoken = speakable(reply);
+      const caption = `${spoken}${spoken.length < reply.length ? "…" : ""}\nголос: elevenlabs.io`;
       await tg.sendVoice(chatId, audio, caption).catch((e: unknown) => console.error("sendVoice failed:", (e as Error).message));
     }
   }

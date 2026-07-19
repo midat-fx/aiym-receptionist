@@ -29,6 +29,7 @@
       .muted { color:var(--muted); }
       .hidden { display:none; }
       .toast { position:fixed; top:14px; left:50%; transform:translateX(-50%); background:var(--ok); color:#fff; padding:9px 16px; border-radius:999px; opacity:0; transition:opacity .3s; }
+      .toast.err { background:#c0392b; }
       .toast.show { opacity:1; }
     </style>
   </head>
@@ -78,7 +79,7 @@
       const $ = (id) => document.getElementById(id);
       let TOKEN = localStorage.getItem("aiym_admin_token") || "";
 
-      function toast(m) { const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1800); }
+      function toast(m, isErr) { const t=$("toast"); t.textContent=m; t.classList.toggle("err", !!isErr); t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1800); }
       async function api(path, opts = {}) {
         return fetch(path, { ...opts, headers: { ...(opts.headers||{}), authorization: "Bearer " + TOKEN, "content-type": "application/json" } });
       }
@@ -123,7 +124,14 @@
           const st = document.createElement("td");
           const sel = document.createElement("select");
           Object.keys(STATUSES).forEach((k) => { const o=document.createElement("option"); o.value=k; o.textContent=STATUSES[k]; if(k===l.status)o.selected=true; sel.appendChild(o); });
-          sel.onchange = async () => { await api("/admin/api/lead-status",{method:"POST",body:JSON.stringify({lead_id:l.id,status:sel.value})}); toast("Статус обновлён"); };
+          sel.onchange = async () => {
+            try {
+              const res = await api("/admin/api/lead-status",{method:"POST",body:JSON.stringify({lead_id:l.id,status:sel.value})});
+              if (res.ok) { toast("Статус обновлён"); return; }
+              if (res.status === 401) { localStorage.removeItem("aiym_admin_token"); location.reload(); return; }
+              toast("Не удалось обновить статус", true); loadLeads();   // reload so the DOM stops lying
+            } catch (e) { toast("Нет связи с сервером", true); loadLeads(); }
+          };
           st.appendChild(sel);
           tr.appendChild(st);
           body.appendChild(tr);

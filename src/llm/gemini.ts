@@ -92,8 +92,22 @@ export async function runConversation(
   }
 
   // Hops exhausted -> force a plain-text answer with function calling disabled.
+  // Tools are off here, so the model literally cannot book: say so, or it will
+  // happily "confirm" an appointment that was never written.
   const finalParts = partsOf(
-    await callGemini(env, { ...base, contents, tool_config: { function_calling_config: { mode: "NONE" } } }),
+    await callGemini(env, {
+      ...base,
+      system_instruction: {
+        parts: [
+          { text: systemPrompt },
+          {
+            text: "ВАЖНО: инструменты сейчас недоступны, записать клиента в этом сообщении ты НЕ можешь. Не утверждай, что запись сделана — предложи время и попроси подтвердить.",
+          },
+        ],
+      },
+      contents,
+      tool_config: { function_calling_config: { mode: "NONE" } },
+    }),
   );
   const text = textOf(finalParts);
   return text ? { reply: text } : { reply: FALLBACK, handoff: true };

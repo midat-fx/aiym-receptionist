@@ -112,6 +112,10 @@ export interface DispatchContext {
   clientName?: string;
   clientPhone?: string;
   handoffReason?: string;
+  /** The engine confirmed a booking this turn (including an idempotent repeat). */
+  bookingConfirmed?: boolean;
+  /** Details of that confirmation, so a reply can be composed without the LLM. */
+  lastConfirmation?: { service: string; label: string };
 }
 
 const asString = (v: unknown): string | undefined => (v == null ? undefined : String(v));
@@ -187,10 +191,12 @@ export async function dispatchTool(
     const offered = ctx.lastOffered.find((o) => o.service_id === serviceId && o.start === slotStart);
     if (!offered) return { error: "call checkFreeSlots first and copy slot_start from its response" };
 
-    const active = await countActiveBookings(ctx.db, ctx.business.id, {
-      tgChatId: ctx.tgChatId,
-      webSessionId: ctx.webSessionId,
-    });
+    const active = await countActiveBookings(
+      ctx.db,
+      ctx.business.id,
+      { tgChatId: ctx.tgChatId, webSessionId: ctx.webSessionId },
+      ctx.now,
+    );
     if (active >= 2) return { error: "booking_limit" };
 
     const phone = args.client_phone != null ? normalizePhone(String(args.client_phone)) : undefined;
@@ -211,21 +217,29 @@ export async function dispatchTool(
       ctx.now,
     );
     if (result.ok) {
+      // Client fields update even on a repeat turn (it may carry a phone the first one lacked).
       if (clientName) ctx.clientName = clientName;
       if (phone) ctx.clientPhone = phone;
-      ctx.events.push({ type: "booking_created" });
-      const master = ctx.resources.find((r) => r.id === svc.resource_id)?.name;
-      ctx.crmEvents.push({
-        type: "booking_created",
-        business_id: ctx.business.id,
-        summary: `${clientName || "Клиент"}: ${svc.name}, ${offered.label}`,
-        service: svc.name,
-        label: offered.label,
-        master,
-        client_name: clientName || undefined,
-        client_phone: phone,
-        booking_id: result.booking.id,
-      });
+      // True for both a fresh booking and an idempotent repeat — the slot IS held.
+      ctx.bookingConfirmed = true;
+      ctx.lastConfirmation = { service: svc.name, label: offered.label };
+      // An idempotent repeat changed nothing — don't re-notify the owner or re-pulse the grid.
+      if (!result.already) {
+        ctx.events.push({ type: "booking_created" });
+        const master = ctx.resources.find((r) => r.id === svc.resource_id)?.name;
+        ctx.crmEvents.push({
+          type: "booking_created",
+          business_id: ctx.business.id,
+          summary: `${clientName || "Клиент"}: ${svc.name}, ${offered.label}`,
+          service: svc.name,
+          label: offered.label,
+          master,
+          client_name: clientName || undefined,
+          client_phone: phone,
+          booking_id: result.booking.id,
+        });
+      }
+      // Shape stays byte-identical on the `already` path so the TTS cache hits (§8 stage 5).
       return { ok: true, confirmation: { service: svc.name, label: offered.label, client_name: clientName } };
     }
     ctx.lastOffered = offeredToLast(serviceId, result.alternatives);
@@ -240,7 +254,7 @@ export async function dispatchTool(
     const confirm = args.confirm === true;
     const by = { bizId: ctx.business.id, tgChatId: ctx.tgChatId, webSessionId: ctx.webSessionId };
     if (!confirm) {
-      const booking = await getActiveBooking(ctx.db, by);
+      const booking = await getActiveBooking(ctx.db, by, ctx.now);
       if (!booking) return { active_booking: null };
       const svc = ctx.services.find((s) => s.id === booking.service_id);
       return {

@@ -22,6 +22,19 @@ export interface TurnResult {
   handoffReason?: string;
 }
 
+/**
+ * Past-tense claims that a booking already exists. Present/future offers
+ * («запишу вас на 16:00?») must NOT match — only assertions of a done deed.
+ */
+const CLAIMS_BOOKED = /записал[аи]?\s+вас|вы\s+записан|запись\s+подтвержден|жд[ёе]м\s+вас\s+в\s+\d/i;
+
+/** Compose a confirmation from what the engine actually wrote, with no LLM involved. */
+function writeConfirmation(dctx: DispatchContext): string | null {
+  if (!dctx.bookingConfirmed || !dctx.lastConfirmation) return null;
+  const who = dctx.clientName ? `${dctx.clientName}, ` : "";
+  return `${who}записала вас: ${dctx.lastConfirmation.service}, ${dctx.lastConfirmation.label}. Ждём вас!`;
+}
+
 /** Gemini-down degradation (§9.7): a real reply with tomorrow's free slots, no LLM. */
 async function deterministicFallback(
   env: Env,
@@ -81,7 +94,17 @@ export async function handleTurn(
     if (result.handoff && !dctx.handoffReason) dctx.handoffReason = "ассистент не смог помочь";
   } catch (e) {
     console.error("gemini turn failed:", (e as Error).message);
-    reply = await deterministicFallback(env, business, services, now);
+    // If the engine already wrote to the calendar, NEVER fall back to «предлагаю время» —
+    // that would deny a booking that actually exists. Confirm it from the recorded event.
+    reply = writeConfirmation(dctx) ?? (await deterministicFallback(env, business, services, now));
+  }
+
+  // The engine is the only source of truth about the calendar: if it did not confirm a
+  // booking this turn, the assistant must not claim (past tense) that one exists.
+  if (!dctx.bookingConfirmed && CLAIMS_BOOKED.test(reply)) {
+    console.error("blocked a phantom booking confirmation:", reply.slice(0, 120));
+    reply = "Секунду, уточню и подтвержу запись 🙏";
+    if (!dctx.handoffReason) dctx.handoffReason = "модель подтвердила запись, которой нет";
   }
 
   history.push({ role: "model", text: reply });
@@ -97,10 +120,11 @@ export async function handleTurn(
     const crmCfg = parseCrmConfig(business.crm_config);
     for (const ev of dctx.crmEvents) dispatchCrm(ev, crmCfg, env, ctx);
   }
-  // Handoff to a human is also surfaced to the owner as a lead-style ping.
+  // Handoff to a human is surfaced to the owner as a lead-style ping («📝 Заявка»),
+  // never as a cancellation — the owner would hunt for a booking that never existed.
   if (dctx.handoffReason) {
     dispatchCrm(
-      { type: "booking_cancelled", business_id: business.id, summary: `Нужен человек: ${dctx.handoffReason}` },
+      { type: "lead_created", business_id: business.id, summary: `Нужен человек: ${dctx.handoffReason}` },
       parseCrmConfig(business.crm_config),
       env,
       ctx,

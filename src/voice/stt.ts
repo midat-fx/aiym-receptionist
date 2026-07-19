@@ -33,25 +33,27 @@ export async function transcribeVoice(
     const file = await tg.getFile(fileId);
     if (!file.file_path) return { ok: false };
 
+    // ONE shared deadline for download + inference. Two separate 10s timers would allow a
+    // 20s STT leg which, with LLM 10s + TTS 8s, blows the 30s waitUntil budget (§9 rule 6).
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let audioBuf: ArrayBuffer;
     try {
       const res = await fetch(tg.fileUrl(file.file_path), { signal: controller.signal });
       if (!res.ok) return { ok: false };
-      audioBuf = await res.arrayBuffer();
+      const audioBuf = await res.arrayBuffer();
+
+      // Input is a base64 STRING (not Uint8Array — that was the old @cf/openai/whisper). vad_filter
+      // is required or Whisper hallucinates on silence. Language stays auto-detected (ru + kk).
+      const out = (await env.AI.run(
+        "@cf/openai/whisper-large-v3-turbo" as never,
+        { audio: toBase64(audioBuf), vad_filter: true } as never,
+        { signal: controller.signal } as never,
+      )) as { text?: string };
+      const text = (out?.text ?? "").trim();
+      return text ? { ok: true, text } : { ok: false };
     } finally {
       clearTimeout(timer);
     }
-
-    // Input is a base64 STRING (not Uint8Array — that was the old @cf/openai/whisper). vad_filter
-    // is required or Whisper hallucinates on silence.
-    const out = (await env.AI.run("@cf/openai/whisper-large-v3-turbo" as never, {
-      audio: toBase64(audioBuf),
-      vad_filter: true,
-    } as never)) as { text?: string };
-    const text = (out?.text ?? "").trim();
-    return text ? { ok: true, text } : { ok: false };
   } catch (e) {
     console.error("stt failed:", (e as Error).message);
     return { ok: false };

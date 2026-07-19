@@ -143,15 +143,19 @@ export async function book(db: D1Database, args: BookArgs, now: Date = new Date(
   return { ok: true, booking };
 }
 
-async function findActiveBooking(db: D1Database, by: CancelBy): Promise<BookingRow | null> {
+async function findActiveBooking(db: D1Database, by: CancelBy, now: Date): Promise<BookingRow | null> {
   if (by.bookingId) {
+    // The owner names a specific row in the admin panel — reachable even once it has passed.
     return db
       .prepare("SELECT * FROM bookings WHERE id = ? AND business_id = ? AND status = 'confirmed'")
       .bind(by.bookingId, by.bizId)
       .first<BookingRow>();
   }
   const conds: string[] = [];
-  const binds: unknown[] = [by.bizId];
+  // Nothing ever retires a past booking out of 'confirmed', so identity lookups must
+  // exclude finished visits — otherwise «перенесите мою запись» resolves to yesterday.
+  // Bound on end_ts, not start_ts: an in-progress appointment stays cancellable.
+  const binds: unknown[] = [by.bizId, Math.floor(now.getTime() / 1000)];
   if (by.tgChatId != null) {
     conds.push("tg_chat_id = ?");
     binds.push(by.tgChatId);
@@ -166,21 +170,21 @@ async function findActiveBooking(db: D1Database, by: CancelBy): Promise<BookingR
   }
   if (conds.length === 0) return null;
   // >1 active booking -> cancel the soonest by start_ts.
-  const sql = `SELECT * FROM bookings WHERE business_id = ? AND status = 'confirmed' AND (${conds.join(" OR ")}) ORDER BY start_ts ASC LIMIT 1`;
+  const sql = `SELECT * FROM bookings WHERE business_id = ? AND status = 'confirmed' AND end_ts > ? AND (${conds.join(" OR ")}) ORDER BY start_ts ASC LIMIT 1`;
   return db
     .prepare(sql)
     .bind(...binds)
     .first<BookingRow>();
 }
 
-/** The client's soonest active booking, or null — for «what's my booking» and reschedule. */
-export async function getActiveBooking(db: D1Database, by: CancelBy): Promise<BookingRow | null> {
-  return findActiveBooking(db, by);
+/** The client's soonest upcoming booking, or null — for «what's my booking» and reschedule. */
+export async function getActiveBooking(db: D1Database, by: CancelBy, now: Date = new Date()): Promise<BookingRow | null> {
+  return findActiveBooking(db, by, now);
 }
 
 /** Mark the booking cancelled and free its cells (DELETE); the row stays for history. */
-export async function cancel(db: D1Database, by: CancelBy, _now: Date = new Date()): Promise<CancelResult> {
-  const booking = await findActiveBooking(db, by);
+export async function cancel(db: D1Database, by: CancelBy, now: Date = new Date()): Promise<CancelResult> {
+  const booking = await findActiveBooking(db, by, now);
   if (!booking) return { ok: false, reason: "not_found" };
 
   await db.batch([

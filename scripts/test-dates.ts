@@ -14,9 +14,15 @@ import { toolDeclarations } from "../src/llm/tools";
 const TZ = "Asia/Almaty";
 const NOW = new Date("2026-07-18T09:00:00Z"); // Saturday 14:00 Almaty
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
-const KEY =
-  process.env.GEMINI_API_KEY ||
-  (readFileSync(`${process.env.HOME}/projects/deka/.env`, "utf8").match(/GEMINI_API_KEY=(.+)/)?.[1] ?? "").trim();
+// Public repo: the local .env fallback must not crash a stranger who just cloned this.
+function localKeyFallback(): string {
+  try {
+    return (readFileSync(`${process.env.HOME}/projects/deka/.env`, "utf8").match(/GEMINI_API_KEY=(.+)/)?.[1] ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+const KEY = process.env.GEMINI_API_KEY || localKeyFallback();
 
 const business: BusinessRow = {
   id: 1,

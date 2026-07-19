@@ -8,6 +8,26 @@ const CREDITS_PER_CHAR = 0.5;
 const CACHE_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
 const TTS_TIMEOUT_MS = 8_000;
 
+/**
+ * Make a reply speakable: drop markdown markers and emoji, collapse whitespace and
+ * cut at the last sentence boundary within MAX_CHARS (falling back to a word boundary)
+ * so the voice never trails off mid-word. Exported — the caption reuses it.
+ */
+export function speakable(text: string, max = MAX_CHARS): string {
+  const clean = text
+    .replace(/[*_`#>]/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{FE0F}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (clean.length <= max) return clean;
+  const head = clean.slice(0, max);
+  const sentence = Math.max(head.lastIndexOf(". "), head.lastIndexOf("! "), head.lastIndexOf("? "));
+  if (sentence > max * 0.5) return head.slice(0, sentence + 1).trim();
+  const word = head.lastIndexOf(" ");
+  return (word > 0 ? head.slice(0, word) : head).trim();
+}
+
 async function sha256hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -28,7 +48,7 @@ export async function synthesizeVoice(
   fetchFn: typeof fetch = (input, init) => fetch(input, init),
 ): Promise<ArrayBuffer | null> {
   if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_VOICE_ID) return null; // module disabled
-  const clean = text.slice(0, MAX_CHARS);
+  const clean = speakable(text);
   const cacheKey = `tts:${await sha256hex(`${clean}:${env.ELEVENLABS_VOICE_ID}`)}`;
 
   const cached = await env.KV.get(cacheKey, "arrayBuffer");
@@ -55,7 +75,11 @@ export async function synthesizeVoice(
           signal: controller.signal,
         },
       );
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // Silence here is how an exhausted/revoked key hides for weeks.
+        console.error("tts http", res.status, (await res.text()).slice(0, 200));
+        return null;
+      }
       audio = await res.arrayBuffer();
     } finally {
       clearTimeout(timer);

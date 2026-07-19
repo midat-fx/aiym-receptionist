@@ -24,6 +24,21 @@ export function isHhmm(value: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
+/**
+ * Intl.DateTimeFormat construction dominates slot generation (it ran 4x per candidate,
+ * i.e. hundreds of times for a 14-day range). Formatters are immutable — cache them.
+ */
+const FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+function fmt(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = locale + "|" + JSON.stringify(options);
+  let f = FORMATTERS.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, options);
+    FORMATTERS.set(key, f);
+  }
+  return f;
+}
+
 function part(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): string {
   const found = parts.find((p) => p.type === type);
   if (!found) throw new Error(`missing ${type} in formatted date`);
@@ -32,7 +47,7 @@ function part(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTyp
 
 /** Local calendar date (YYYY-MM-DD) for `now` in the given tz. */
 export function todayInTz(tz: string, now: Date): string {
-  const p = new Intl.DateTimeFormat("en-US", {
+  const p = fmt("en-US", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
@@ -57,7 +72,7 @@ export function weekdayOf(dateIso: string): WeekdayKey {
 
 // Interpret an instant in tz and return its wall-clock components as if they were UTC.
 function wallClockAsUtcMs(instantMs: number, tz: string): number {
-  const p = new Intl.DateTimeFormat("en-US", {
+  const p = fmt("en-US", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
@@ -100,7 +115,7 @@ export function localToTs(local: string, tz: string): number {
 
 /** Unix seconds -> local machine datetime "YYYY-MM-DDTHH:mm" in tz. */
 export function tsToLocal(ts: number, tz: string): string {
-  const p = new Intl.DateTimeFormat("en-CA", {
+  const p = fmt("en-CA", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
@@ -119,7 +134,7 @@ export function tsToLocal(ts: number, tz: string): string {
  */
 export function formatSlotLabel(startTs: number, tz: string): string {
   const d = new Date(startTs * 1000);
-  const dayFmt = new Intl.DateTimeFormat("ru-RU", { timeZone: tz, weekday: "short", day: "numeric", month: "long" });
-  const timeFmt = new Intl.DateTimeFormat("ru-RU", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+  const dayFmt = fmt("ru-RU", { timeZone: tz, weekday: "short", day: "numeric", month: "long" });
+  const timeFmt = fmt("ru-RU", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
   return `${dayFmt.format(d)}, ${timeFmt.format(d)}`;
 }
