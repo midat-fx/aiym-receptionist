@@ -19,8 +19,9 @@
     "GEMINI_MODEL": "gemini-3.1-flash-lite",
     // Natalia — warm conversational Russian female (ElevenLabs voice library).
     "ELEVENLABS_VOICE_ID": "dHAwRJVaEPhU907QLTPW",
-    // Cloudflare test key (always-pass) until the owner mints real Turnstile keys in the dashboard.
-    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    // Real Turnstile widget «aiym» (Managed mode, hostname aiym.faizov-midat.workers.dev).
+    // The sitekey is public by design — it ships in demo.html. The secret is a Worker secret.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAD5SDaDG6jwN1y4T",
     // Adapter bitrix24 is active only when cfg.bitrix24.webhookUrl && BITRIX_ENABLED === "true".
     "BITRIX_ENABLED": "false"
   },
