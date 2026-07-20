@@ -1,5 +1,5 @@
 import { handleTurn } from "./chat";
-import { parseWorkingHours } from "./config";
+import { parseLimits, parseWorkingHours } from "./config";
 import { ensureConversation, getConversation } from "./conversation";
 import { getBusinessBySlug, getResources } from "./db";
 import type { Env } from "./env";
@@ -46,14 +46,15 @@ export async function handleChat(request: Request, env: Env, ctx: ExecutionConte
   const day = todayInTz(business.tz, new Date());
   const ip = request.headers.get("cf-connecting-ip") ?? undefined;
   // Per-session and per-IP first: a caller being rate-limited must not also drain the
-  // shared 300/day tenant budget it is being denied.
-  const sessionLimit = await checkAndIncrement(env.DB, "chat", `${business.id}:web:${sessionId}`, day, 20);
+  // shared tenant budget it is being denied.
+  const limits = parseLimits(business.limits, business.is_demo === 1);
+  const sessionLimit = await checkAndIncrement(env.DB, "chat", `${business.id}:web:${sessionId}`, day, limits.chatPerDay);
   if (!sessionLimit.ok) return json({ reply: "На сегодня достаточно сообщений в демо 🙏 Попробуйте завтра.", events: [] });
   if (ip) {
-    const ipLimit = await checkAndIncrement(env.DB, "chat", `${business.id}:ip:${ip}`, day, 60);
+    const ipLimit = await checkAndIncrement(env.DB, "chat", `${business.id}:ip:${ip}`, day, limits.ipPerDay);
     if (!ipLimit.ok) return json({ reply: "Слишком много запросов с вашего адреса — попробуйте позже 🙏", events: [] });
   }
-  const globalLimit = await checkAndIncrement(env.DB, "global_msg", String(business.id), utcDay(), 300);
+  const globalLimit = await checkAndIncrement(env.DB, "global_msg", String(business.id), utcDay(), limits.globalPerDay);
   if (!globalLimit.ok) return json({ reply: "Сегодня необычно много сообщений — загляните чуть позже 🙏", events: [] });
 
   const text = String(body.text ?? "").slice(0, 1000).trim();

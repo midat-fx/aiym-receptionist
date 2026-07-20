@@ -9,6 +9,7 @@
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "test:dates": "tsx scripts/test-dates.ts",
+    "onboard": "tsx scripts/onboard.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

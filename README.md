@@ -71,6 +71,24 @@ GEMINI_API_KEY=... npm run test:dates   # 15-phrase date-eval through real Gemin
 
 The concurrency test fires two `book()` calls at the same slot and asserts exactly one row survives; the date-eval scores 15/15 on natural-language dates ("к трём" → 15:00, out-of-window → explains the limit).
 
+## Onboarding a real salon
+
+```bash
+cp launch/salon-example.json my-salon.json   # edit hours, masters, services
+npm run onboard my-salon.json --apply         # validates, writes rows, prints the admin token
+```
+
+Real tenants get `is_demo = 0` (the nightly reset never touches them) and **LIVE limits**
+by default (80 messages/client/day, 5 upcoming bookings); the demo keeps tight caps.
+Per-tenant overrides live in `businesses.limits` JSON.
+
+## Health & monitoring
+
+`GET /api/health` returns a JSON report (D1 reachable, secrets present, Turnstile live,
+free-tier headroom) — `200` when healthy, `503` on failure, never a secret value. The
+nightly cron re-runs it after the demo reset and pings the owner in Telegram **only** when
+something is wrong.
+
 ## Roadmap
 
 WhatsApp Cloud API · amoCRM OAuth · Gemini TTS (when it leaves preview) · realtime telephony (SIP/Twilio) · multi-location networks · online prepayment.

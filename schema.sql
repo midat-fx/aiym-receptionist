@@ -18,6 +18,7 @@ CREATE TABLE businesses (
   owner_tg_chat_id INTEGER,
   admin_token_hash TEXT NOT NULL,             -- SHA-256 hex
   crm_config TEXT NOT NULL DEFAULT '{}',
+  limits TEXT NOT NULL DEFAULT '{}',          -- JSON overrides; empty = defaults by is_demo (config.ts)
   is_demo INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -2,6 +2,7 @@
 // Each test pins one previously-shipped bug so it cannot come back.
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { DEMO_LIMITS, LIVE_LIMITS, parseLimits } from "../src/config";
 import { countActiveBookings, getBusinessBySlug, getActiveServices, getResources, type BusinessRow, type ResourceRow, type ServiceRow } from "../src/db";
 import { resetDemo } from "../src/demoReset";
 import { cancel, getActiveBooking } from "../src/engine/booking";
@@ -112,6 +113,44 @@ describe("F7 — nightly reset must not wipe the monthly ElevenLabs credit count
     expect(credits?.count).toBe(5000); // survived
     expect(stale?.n).toBe(0); // pruned
     expect(fresh?.n).toBe(1); // kept
+  });
+});
+
+describe("limits are per-tenant, not hardcoded demo values", () => {
+  it("defaults by is_demo, honours overrides, survives garbage", () => {
+    expect(parseLimits("{}", true)).toEqual(DEMO_LIMITS);
+    expect(parseLimits("{}", false)).toEqual(LIVE_LIMITS);
+    expect(parseLimits('{"activeBookings":7}', true).activeBookings).toBe(7);
+    expect(parseLimits('{"activeBookings":7}', true).chatPerDay).toBe(DEMO_LIMITS.chatPerDay); // others untouched
+    expect(parseLimits("not json at all", true)).toEqual(DEMO_LIMITS); // must never lock a salon out
+    expect(parseLimits('{"activeBookings":-3}', false).activeBookings).toBe(LIVE_LIMITS.activeBookings);
+  });
+
+  it("a real salon lets a regular hold more upcoming bookings than the demo does", async () => {
+    // A second tenant, is_demo = 0 -> LIVE limits.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO businesses (id, slug, name, working_hours, admin_token_hash, limits, is_demo) VALUES (2, 'real-salon', 'Реальный', ?, 'h2', '{}', 0)",
+      ).bind(JSON.stringify({ mon: [["10:00", "20:00"]], tue: [["10:00", "20:00"]] })),
+      env.DB.prepare("INSERT INTO resources (id, business_id, name) VALUES (20, 2, 'Мастер')"),
+      env.DB.prepare(
+        "INSERT INTO services (id, business_id, resource_id, name, duration_min, price_kzt) VALUES (20, 2, 20, 'Стрижка', 30, 5000)",
+      ),
+    ]);
+    const real = (await env.DB.prepare("SELECT * FROM businesses WHERE id = 2").first()) as BusinessRow;
+    const ctx: DispatchContext = {
+      db: env.DB, business: real, services: [{ id: 20, business_id: 2, resource_id: 20, name: "Стрижка", duration_min: 30, price_kzt: 5000, price_from: 0, is_active: 1 }],
+      resources: [{ id: 20, business_id: 2, name: "Мастер", role: "" }],
+      now: NOW, channel: "tg", tgChatId: 9500, lastOffered: [], events: [], crmEvents: [],
+    };
+    // Three bookings in a row would be refused on the demo tenant (cap 2).
+    for (const time of ["15:00", "16:00", "17:00"]) {
+      await dispatchTool(ctx, "checkFreeSlots", { service_id: 20, from_date: DAY, to_date: DAY });
+      const r = await dispatchTool(ctx, "bookSlot", { service_id: 20, slot_start: `${DAY}T${time}`, client_name: "Постоянная" });
+      expect(r.ok, `booking at ${time} should be allowed for a real salon`).toBe(true);
+    }
+    expect(await countActiveBookings(env.DB, 2, { tgChatId: 9500 }, NOW)).toBe(3);
+    await env.DB.prepare("DELETE FROM businesses WHERE id = 2").run();
   });
 });
 

@@ -1,6 +1,7 @@
 // Gemini functionDeclarations — Appendix C, applied verbatim, plus the dispatcher
 // (validation + last_offered lock + engine calls).
 
+import { parseLimits } from "../config";
 import type { CrmEvent } from "../crm/adapter";
 import type { BusinessRow, Channel, ResourceRow, ServiceRow } from "../db";
 import { countActiveBookings, insertLead } from "../db";
@@ -197,7 +198,9 @@ export async function dispatchTool(
       { tgChatId: ctx.tgChatId, webSessionId: ctx.webSessionId },
       ctx.now,
     );
-    if (active >= 2) return { error: "booking_limit" };
+    // Per-tenant: a public demo caps at 2, a paying salon lets regulars book ahead.
+    const maxActive = parseLimits(ctx.business.limits, ctx.business.is_demo === 1).activeBookings;
+    if (active >= maxActive) return { error: "booking_limit", max_active: maxActive };
 
     const phone = args.client_phone != null ? normalizePhone(String(args.client_phone)) : undefined;
     const result = await book(

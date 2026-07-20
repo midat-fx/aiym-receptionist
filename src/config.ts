@@ -8,6 +8,60 @@ export interface CrmConfig {
   amocrm?: Record<string, unknown>;
 }
 
+/**
+ * Per-tenant guardrails. The demo needs tight caps (it is a public toy anyone can
+ * hammer); a paying salon needs room to actually operate. Account-wide budgets
+ * (Whisper neurons, ElevenLabs credits) stay global — they are shared by all tenants.
+ */
+export interface Limits {
+  chatPerDay: number; // messages per client per day
+  globalPerDay: number; // messages per business per day
+  voicePerDay: number; // voice notes per client per day
+  ipPerDay: number; // web messages per IP per day
+  activeBookings: number; // upcoming bookings one client may hold
+}
+
+export const DEMO_LIMITS: Limits = {
+  chatPerDay: 20,
+  globalPerDay: 300,
+  voicePerDay: 5,
+  ipPerDay: 60,
+  activeBookings: 2,
+};
+
+/** A working salon: generous enough not to block real clients, still bounded. */
+export const LIVE_LIMITS: Limits = {
+  chatPerDay: 80,
+  globalPerDay: 2000,
+  voicePerDay: 25,
+  ipPerDay: 200,
+  activeBookings: 5,
+};
+
+/** Merge businesses.limits JSON over the defaults chosen by is_demo. Bad JSON must never lock a salon out. */
+export function parseLimits(json: string, isDemo: boolean): Limits {
+  const base = isDemo ? DEMO_LIMITS : LIVE_LIMITS;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json || "{}");
+  } catch {
+    return base;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return base;
+  const obj = raw as Record<string, unknown>;
+  const pick = (key: keyof Limits): number => {
+    const v = obj[key];
+    return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : base[key];
+  };
+  return {
+    chatPerDay: pick("chatPerDay"),
+    globalPerDay: pick("globalPerDay"),
+    voicePerDay: pick("voicePerDay"),
+    ipPerDay: pick("ipPerDay"),
+    activeBookings: pick("activeBookings"),
+  };
+}
+
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);

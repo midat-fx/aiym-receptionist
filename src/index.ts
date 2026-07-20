@@ -1,10 +1,12 @@
 import { handleAdmin } from "./admin";
 import { handleTurn } from "./chat";
 import { ensureConversation } from "./conversation";
+import { parseLimits } from "./config";
 import { sha256hex } from "./crypto";
 import { getBusinessByBotId, getBusinessBySlug, type BusinessRow } from "./db";
 import { seenBefore } from "./dedup";
 import { resetDemo } from "./demoReset";
+import { healthCheck, runHealthAlert } from "./health";
 import type { Env } from "./env";
 import { todayInTz } from "./engine/time";
 import { markdownToTelegramHtml, splitMessage } from "./format";
@@ -60,6 +62,16 @@ export default {
     if (method === "GET" && pathname === "/api/demo/config") {
       return handleConfig(request, env);
     }
+    if (method === "GET" && pathname === "/api/health") {
+      // ?alert=<WEBHOOK_SECRET> also fires the owner Telegram ping (same path the cron uses),
+      // so the alert channel can be verified on demand without waiting for 03:00.
+      if (url.searchParams.get("alert") === env.WEBHOOK_SECRET && env.WEBHOOK_SECRET) {
+        const report = await runHealthAlert(env);
+        return Response.json({ alerted: report.status !== "ok", ...report });
+      }
+      const report = await healthCheck(env);
+      return Response.json(report, { status: report.status === "fail" ? 503 : 200 });
+    }
     if (method === "GET" && pathname === "/api/tg/setup") {
       return handleTgSetup(request, env);
     }
@@ -71,11 +83,18 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Nightly demo reset (cron 0 22 * * * UTC = 03:00 Almaty).
+    // Nightly demo reset (cron 0 22 * * * UTC = 03:00 Almaty), then a self-check
+    // that pings the owner in Telegram if anything is wrong (single existing cron, §9.8).
     try {
       await resetDemo(env.DB);
     } catch (e) {
       console.error("scheduled resetDemo failed:", (e as Error).message);
+    }
+    try {
+      const report = await runHealthAlert(env);
+      console.log("nightly health:", report.status, JSON.stringify(report.checks.filter((c) => c.level !== "ok")));
+    } catch (e) {
+      console.error("scheduled health check failed:", (e as Error).message);
     }
   },
 } satisfies ExportedHandler<Env>;
@@ -204,12 +223,13 @@ async function respondTurn(
   voice: boolean,
 ): Promise<void> {
   const day = todayInTz(business.tz, new Date());
-  const globalLimit = await checkAndIncrement(env.DB, "global_msg", String(business.id), utcDay(), 300);
+  const limits = parseLimits(business.limits, business.is_demo === 1);
+  const globalLimit = await checkAndIncrement(env.DB, "global_msg", String(business.id), utcDay(), limits.globalPerDay);
   if (!globalLimit.ok) {
     await tg.sendMessage(chatId, "Сегодня необычно много сообщений — вернусь чуть позже 🙏");
     return;
   }
-  const chatLimit = await checkAndIncrement(env.DB, "chat", `${business.id}:${chatId}`, day, 20);
+  const chatLimit = await checkAndIncrement(env.DB, "chat", `${business.id}:${chatId}`, day, limits.chatPerDay);
   if (!chatLimit.ok) {
     await tg.sendMessage(chatId, "На сегодня достаточно сообщений — напишите, пожалуйста, завтра 🙏");
     return;
@@ -218,7 +238,7 @@ async function respondTurn(
   // already transcribed and in hand (§5: «6-я … → только текст»).
   let speak = voice;
   if (voice) {
-    const voiceLimit = await checkAndIncrement(env.DB, "voice", `${business.id}:${chatId}`, day, 5);
+    const voiceLimit = await checkAndIncrement(env.DB, "voice", `${business.id}:${chatId}`, day, limits.voicePerDay);
     if (!voiceLimit.ok) {
       speak = false;
       await tg.sendMessage(chatId, "На сегодня достаточно голосовых 🙏 Отвечу текстом.");

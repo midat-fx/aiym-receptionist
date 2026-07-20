@@ -48,6 +48,7 @@ const business: BusinessRow = {
   owner_tg_chat_id: null,
   admin_token_hash: "x",
   crm_config: "{}",
+  limits: "{}",
   is_demo: 1,
   created_at: "",
 };

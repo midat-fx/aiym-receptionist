@@ -4,12 +4,12 @@
 -- admin_token_hash is SHA-256 of the token kept locally in .admin-token.local.
 
 INSERT INTO businesses
-  (id, slug, name, assistant_name, address, tz, working_hours, slot_step_min, buffer_min, booking_horizon_days, admin_token_hash, crm_config, is_demo)
+  (id, slug, name, assistant_name, address, tz, working_hours, slot_step_min, buffer_min, booking_horizon_days, admin_token_hash, crm_config, limits, is_demo)
 VALUES
   (1, 'demo-salon', 'Керемет', 'Айым', 'ул. Розыбакиева 125, Алматы', 'Asia/Almaty',
    '{"mon":[["10:00","20:00"]],"tue":[["10:00","20:00"]],"wed":[["10:00","20:00"]],"thu":[["10:00","20:00"]],"fri":[["10:00","20:00"]],"sat":[["10:00","20:00"]],"sun":[["11:00","18:00"]]}',
    30, 0, 14,
-   '834f246d5e42d794ef2b7ad9f78327c83e7772fe5198b275d3d74db9f97a3b63', '{}', 1);
+   '834f246d5e42d794ef2b7ad9f78327c83e7772fe5198b275d3d74db9f97a3b63', '{}', '{}', 1);
 
 INSERT INTO resources (id, business_id, name, role) VALUES
   (1, 1, 'Айгерим', 'парикмахер-колорист'),

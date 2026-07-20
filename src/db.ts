@@ -16,6 +16,7 @@ export interface BusinessRow {
   owner_tg_chat_id: number | null;
   admin_token_hash: string;
   crm_config: string; // JSON, parsed by config.ts
+  limits: string; // JSON overrides, parsed by config.parseLimits
   is_demo: number;
   created_at: string;
 }
